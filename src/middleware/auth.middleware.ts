@@ -3,9 +3,11 @@ import jwt from "jsonwebtoken";
 import { Role } from "../generated/prisma/client.js";
 import { getJwtSecret } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
+import type { AccountType } from "../services/auth.service.js";
 
 type JwtPayload = {
   userId: string;
+  accountType: AccountType;
   role: Role;
   apartmentId?: string;
 };
@@ -16,9 +18,54 @@ function isJwtPayload(value: unknown): value is JwtPayload {
 
   return (
     typeof payload.userId === "string" &&
+    (payload.accountType === "ADMIN" || payload.accountType === "TENANT") &&
     Object.values(Role).includes(payload.role as Role) &&
-    (payload.apartmentId === undefined || typeof payload.apartmentId === "string")
+    (payload.apartmentId === undefined || typeof payload.apartmentId === "string") &&
+    ((payload.accountType === "TENANT" && payload.role === Role.TENANT) ||
+      (payload.accountType === "ADMIN" && payload.role !== Role.TENANT))
   );
+}
+
+async function identityIsActive(identity: JwtPayload): Promise<boolean> {
+  if (identity.accountType === "TENANT") {
+    if (!identity.apartmentId) return false;
+
+    const tenant = await prisma.tenantUser.findUnique({
+      where: { id: identity.userId },
+      select: {
+        apartmentId: true,
+        isActive: true,
+        apartment: { select: { isActive: true } },
+      },
+    });
+
+    return Boolean(
+      tenant?.isActive &&
+        tenant.apartment.isActive &&
+        tenant.apartmentId === identity.apartmentId,
+    );
+  }
+
+  const admin = await prisma.adminUser.findUnique({
+    where: { id: identity.userId },
+    select: {
+      role: true,
+      isActive: true,
+      apartments: identity.apartmentId
+        ? {
+            where: {
+              apartmentId: identity.apartmentId,
+              apartment: { isActive: true },
+            },
+            select: { apartmentId: true },
+          }
+        : { select: { apartmentId: true } },
+    },
+  });
+
+  if (!admin?.isActive || admin.role !== identity.role) return false;
+  if (admin.role === Role.SUPER_ADMIN) return identity.apartmentId === undefined;
+  return Boolean(identity.apartmentId && admin.apartments.length === 1);
 }
 
 export const authenticate: RequestHandler = async (request, response, next) => {
@@ -33,29 +80,7 @@ export const authenticate: RequestHandler = async (request, response, next) => {
     const token = authorization.slice("Bearer ".length);
     const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] });
 
-    if (!isJwtPayload(decoded)) {
-      response.status(401).json({ message: "Invalid or expired token" });
-      return;
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        role: true,
-        apartmentId: true,
-        isActive: true,
-        apartment: { select: { isActive: true } },
-      },
-    });
-
-    const claimsMatch =
-      user?.role === decoded.role &&
-      (user.apartmentId ?? undefined) === decoded.apartmentId;
-    const apartmentIsValid =
-      user?.role === Role.SUPER_ADMIN ||
-      (Boolean(user?.apartmentId) && user?.apartment?.isActive === true);
-
-    if (!user?.isActive || !claimsMatch || !apartmentIsValid) {
+    if (!isJwtPayload(decoded) || !(await identityIsActive(decoded))) {
       response.status(401).json({ message: "Invalid or expired token" });
       return;
     }
@@ -66,4 +91,3 @@ export const authenticate: RequestHandler = async (request, response, next) => {
     response.status(401).json({ message: "Invalid or expired token" });
   }
 };
-

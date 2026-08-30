@@ -7,31 +7,60 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id                 String     @id @default(uuid()) @db.Uuid
-  username           String     @unique @db.VarChar(100)
+model AdminUser {
+  id                 String           @id @default(uuid()) @db.Uuid
+  username           String           @unique @db.VarChar(100)
   passwordHash       String
-  phone              String?    @db.VarChar(30)
+  phone              String?          @db.VarChar(30)
   role               Role
-  isActive            Boolean    @default(true)
-  mustChangePassword Boolean    @default(true)
-  apartmentId        String?    @db.Uuid
-  apartment          Apartment? @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
-  createdAt           DateTime   @default(now())
-  updatedAt           DateTime   @updatedAt
+  isActive           Boolean          @default(true)
+  mustChangePassword Boolean          @default(true)
+  apartments         AdminApartment[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
+  @@map("User_Admin")
+}
+
+model TenantUser {
+  id                 String    @id @default(uuid()) @db.Uuid
+  apartmentId        String    @db.Uuid
+  apartment          Apartment @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
+  username           String    @db.VarChar(100)
+  passwordHash       String
+  phone              String?   @db.VarChar(30)
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([apartmentId, username])
+  @@index([username])
+  @@map("User_Tenant")
+}
+
+model AdminApartment {
+  adminUserId String    @db.Uuid
+  apartmentId String    @db.Uuid
+  isPrimary   Boolean   @default(false)
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  apartment   Apartment @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now())
+
+  @@id([adminUserId, apartmentId])
   @@index([apartmentId])
 }
 
 model Apartment {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String   @db.VarChar(200)
-  slug      String   @unique @db.VarChar(100)
-  subdomain String   @unique @db.VarChar(100)
-  isActive  Boolean  @default(true)
-  users     User[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String           @id @default(uuid()) @db.Uuid
+  name       String           @db.VarChar(200)
+  slug       String           @unique @db.VarChar(100)
+  subdomain  String           @unique @db.VarChar(100)
+  isActive   Boolean          @default(true)
+  adminUsers AdminApartment[]
+  tenants    TenantUser[]
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 }
 
 enum Role {
@@ -39,4 +68,3 @@ enum Role {
   APARTMENT_ADMIN
   TENANT
 }
-

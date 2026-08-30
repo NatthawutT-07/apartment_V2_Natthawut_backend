@@ -7,10 +7,24 @@ const bcryptPassword = z
     message: "Password must not exceed 72 bytes",
   });
 
-export const loginSchema = z
+export const adminLoginSchema = z
   .object({
     username: z.string().trim().min(1).max(100),
     password: bcryptPassword,
+  })
+  .strict();
+
+export const tenantLoginSchema = z
+  .object({
+    apartmentCode: z.string().trim().toLowerCase().min(1).max(100),
+    username: z.string().trim().min(1).max(100),
+    password: bcryptPassword,
+  })
+  .strict();
+
+export const switchApartmentSchema = z
+  .object({
+    apartmentId: z.uuid(),
   })
   .strict();
 
@@ -24,4 +38,3 @@ export const changePasswordSchema = z
     message: "New password must be different from the current password",
     path: ["newPassword"],
   });
-

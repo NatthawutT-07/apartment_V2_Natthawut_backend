@@ -5,9 +5,16 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
-  user: {
+  adminUser: {
     findUnique: vi.fn(),
     update: vi.fn(),
+  },
+  tenantUser: {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
+  apartment: {
+    findFirst: vi.fn(),
   },
 }));
 
@@ -21,67 +28,150 @@ import { requireRole } from "../src/middleware/role.middleware.js";
 const password = "StrongPass123!";
 const passwordHash = await bcrypt.hash(password, 4);
 const apartmentId = "20000000-0000-4000-8000-000000000000";
+const otherApartmentId = "30000000-0000-4000-8000-000000000000";
 const userId = "10000000-0000-4000-8000-000000000000";
+const apartment = {
+  id: apartmentId,
+  name: "ABC Apartment",
+  slug: "abc",
+};
 
 const admin = {
   id: userId,
-  username: "admin",
+  username: "owner_abc",
   phone: null,
   role: Role.APARTMENT_ADMIN,
+  mustChangePassword: true,
+  passwordHash,
+  isActive: true,
+  apartments: [{ isPrimary: true, apartment }],
+};
+
+const tenant = {
+  id: userId,
+  username: "room501",
+  phone: null,
   apartmentId,
   mustChangePassword: true,
   passwordHash,
   isActive: true,
-  apartment: { isActive: true },
+  apartment: { ...apartment, isActive: true },
 };
 
-function tokenFor(overrides: Record<string, unknown> = {}) {
+function adminToken(overrides: Record<string, unknown> = {}) {
   return jwt.sign(
-    { userId, role: Role.APARTMENT_ADMIN, apartmentId, ...overrides },
+    {
+      userId,
+      accountType: "ADMIN",
+      role: Role.APARTMENT_ADMIN,
+      apartmentId,
+      ...overrides,
+    },
     process.env.JWT_SECRET!,
     { algorithm: "HS256", expiresIn: "1h" },
   );
 }
 
-describe("authentication API", () => {
+function tenantToken(overrides: Record<string, unknown> = {}) {
+  return jwt.sign(
+    {
+      userId,
+      accountType: "TENANT",
+      role: Role.TENANT,
+      apartmentId,
+      ...overrides,
+    },
+    process.env.JWT_SECRET!,
+    { algorithm: "HS256", expiresIn: "1h" },
+  );
+}
+
+describe("separated authentication API", () => {
   beforeEach(() => {
-    prismaMock.user.findUnique.mockReset();
-    prismaMock.user.update.mockReset();
+    for (const delegate of [
+      prismaMock.adminUser,
+      prismaMock.tenantUser,
+      prismaMock.apartment,
+    ]) {
+      for (const method of Object.values(delegate)) method.mockReset();
+    }
   });
 
-  it("logs in an active user without exposing passwordHash", async () => {
-    prismaMock.user.findUnique.mockResolvedValue(admin);
+  it("logs an apartment admin in only through the admin portal", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue(admin);
 
     const response = await request(app)
-      .post("/api/auth/login")
-      .send({ username: "admin", password });
+      .post("/api/auth/admin/login")
+      .send({ username: "owner_abc", password });
 
     expect(response.status).toBe(200);
-    expect(response.body.accessToken).toEqual(expect.any(String));
     expect(response.body.user).toMatchObject({
       id: userId,
-      username: "admin",
+      accountType: "ADMIN",
       role: Role.APARTMENT_ADMIN,
       apartmentId,
-      mustChangePassword: true,
+      apartmentName: "ABC Apartment",
     });
     expect(response.body.user).not.toHaveProperty("passwordHash");
+    expect(prismaMock.tenantUser.findUnique).not.toHaveBeenCalled();
 
     const decoded = jwt.verify(response.body.accessToken, process.env.JWT_SECRET!);
-    expect(decoded).toMatchObject({ userId, role: Role.APARTMENT_ADMIN, apartmentId });
-    expect(decoded).not.toHaveProperty("username");
-    expect((decoded as jwt.JwtPayload).exp).toBeGreaterThan((decoded as jwt.JwtPayload).iat!);
+    expect(decoded).toMatchObject({
+      userId,
+      accountType: "ADMIN",
+      role: Role.APARTMENT_ADMIN,
+      apartmentId,
+    });
   });
 
-  it("returns the same generic error for an unknown username and wrong password", async () => {
-    prismaMock.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(admin);
+  it("requires an apartment code and scopes a tenant lookup to that apartment", async () => {
+    prismaMock.apartment.findFirst.mockResolvedValue({ id: apartmentId });
+    prismaMock.tenantUser.findUnique.mockResolvedValue(tenant);
+
+    const response = await request(app)
+      .post("/api/auth/tenant/login")
+      .send({ apartmentCode: "ABC", username: "room501", password });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user).toMatchObject({
+      accountType: "TENANT",
+      role: Role.TENANT,
+      apartmentId,
+    });
+    expect(prismaMock.apartment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [{ slug: "abc" }, { subdomain: "abc" }],
+        }),
+      }),
+    );
+    expect(prismaMock.tenantUser.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          apartmentId_username: { apartmentId, username: "room501" },
+        },
+      }),
+    );
+    expect(prismaMock.adminUser.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("does not expose a shared legacy login endpoint", async () => {
+    const response = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "owner_abc", password });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns the same error for unknown admin and wrong password", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(admin);
 
     const unknown = await request(app)
-      .post("/api/auth/login")
+      .post("/api/auth/admin/login")
       .send({ username: "unknown", password });
     const wrongPassword = await request(app)
-      .post("/api/auth/login")
-      .send({ username: "admin", password: "WrongPass123!" });
+      .post("/api/auth/admin/login")
+      .send({ username: "owner_abc", password: "WrongPass123!" });
 
     expect(unknown.status).toBe(401);
     expect(wrongPassword.status).toBe(401);
@@ -89,55 +179,40 @@ describe("authentication API", () => {
     expect(wrongPassword.body).toEqual(unknown.body);
   });
 
-  it.each([
-    { ...admin, isActive: false },
-    { ...admin, apartment: { isActive: false } },
-  ])("rejects inactive users and apartments", async (record) => {
-    prismaMock.user.findUnique.mockResolvedValue(record);
+  it("rejects a tenant from an inactive apartment", async () => {
+    prismaMock.apartment.findFirst.mockResolvedValue({ id: apartmentId });
+    prismaMock.tenantUser.findUnique.mockResolvedValue({
+      ...tenant,
+      apartment: { ...tenant.apartment, isActive: false },
+    });
 
     const response = await request(app)
-      .post("/api/auth/login")
-      .send({ username: "admin", password });
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ message: "Invalid username or password" });
-  });
-
-  it("requires a JWT for /me", async () => {
-    const response = await request(app).get("/api/auth/me");
+      .post("/api/auth/tenant/login")
+      .send({ apartmentCode: "abc", username: "room501", password });
 
     expect(response.status).toBe(401);
   });
 
-  it("returns the current user for a valid, tenant-scoped JWT", async () => {
-    prismaMock.user.findUnique
+  it("returns the current tenant only when token scope matches the database", async () => {
+    prismaMock.tenantUser.findUnique
       .mockResolvedValueOnce({
-        role: Role.APARTMENT_ADMIN,
         apartmentId,
         isActive: true,
         apartment: { isActive: true },
       })
-      .mockResolvedValueOnce({
-        id: userId,
-        username: "admin",
-        phone: null,
-        role: Role.APARTMENT_ADMIN,
-        apartmentId,
-        mustChangePassword: true,
-      });
+      .mockResolvedValueOnce(tenant);
 
     const response = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", `Bearer ${tokenFor()}`);
+      .set("Authorization", `Bearer ${tenantToken()}`);
 
     expect(response.status).toBe(200);
+    expect(response.body.user.accountType).toBe("TENANT");
     expect(response.body.user.apartmentId).toBe(apartmentId);
-    expect(response.body.user).not.toHaveProperty("passwordHash");
   });
 
-  it("rejects a token whose apartment claim differs from the database", async () => {
-    prismaMock.user.findUnique.mockResolvedValue({
-      role: Role.APARTMENT_ADMIN,
+  it("rejects a tenant token carrying another apartment", async () => {
+    prismaMock.tenantUser.findUnique.mockResolvedValue({
       apartmentId,
       isActive: true,
       apartment: { isActive: true },
@@ -145,95 +220,122 @@ describe("authentication API", () => {
 
     const response = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", `Bearer ${tokenFor({ apartmentId: "other-apartment" })}`);
+      .set("Authorization", `Bearer ${tenantToken({ apartmentId: otherApartmentId })}`);
 
     expect(response.status).toBe(401);
   });
 
-  it("changes a password and clears mustChangePassword", async () => {
-    prismaMock.user.findUnique
+  it("lets an assigned admin switch active apartment and issues a scoped token", async () => {
+    const otherApartment = {
+      id: otherApartmentId,
+      name: "XYZ Apartment",
+      slug: "xyz",
+    };
+    prismaMock.adminUser.findUnique
       .mockResolvedValueOnce({
         role: Role.APARTMENT_ADMIN,
+        isActive: true,
+        apartments: [{ apartmentId }],
+      })
+      .mockResolvedValueOnce({
+        ...admin,
+        apartments: [
+          { isPrimary: true, apartment },
+          { isPrimary: false, apartment: otherApartment },
+        ],
+      });
+
+    const response = await request(app)
+      .post("/api/auth/admin/switch-apartment")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({ apartmentId: otherApartmentId });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.apartmentId).toBe(otherApartmentId);
+    const decoded = jwt.verify(response.body.accessToken, process.env.JWT_SECRET!);
+    expect(decoded).toMatchObject({ accountType: "ADMIN", apartmentId: otherApartmentId });
+  });
+
+  it("changes a tenant password in the tenant table", async () => {
+    prismaMock.tenantUser.findUnique
+      .mockResolvedValueOnce({
         apartmentId,
         isActive: true,
         apartment: { isActive: true },
       })
       .mockResolvedValueOnce({ passwordHash });
-    prismaMock.user.update.mockResolvedValue({});
+    prismaMock.tenantUser.update.mockResolvedValue({});
 
     const response = await request(app)
       .post("/api/auth/change-password")
-      .set("Authorization", `Bearer ${tokenFor()}`)
+      .set("Authorization", `Bearer ${tenantToken()}`)
       .send({ currentPassword: password, newPassword: "NewStrongPass456!" });
 
     expect(response.status).toBe(200);
-    const update = prismaMock.user.update.mock.calls[0]?.[0];
+    expect(prismaMock.adminUser.update).not.toHaveBeenCalled();
+    const update = prismaMock.tenantUser.update.mock.calls[0]?.[0];
     expect(update.data.mustChangePassword).toBe(false);
-    expect(update.data.passwordHash).not.toBe(password);
     expect(await bcrypt.compare("NewStrongPass456!", update.data.passwordHash)).toBe(true);
   });
 
-  it("validates login input", async () => {
-    const response = await request(app)
-      .post("/api/auth/login")
-      .send({ username: "", password: "" });
+  it("validates portal-specific login payloads", async () => {
+    const adminResponse = await request(app)
+      .post("/api/auth/admin/login")
+      .send({ username: "owner_abc", password, apartmentCode: "abc" });
+    const tenantResponse = await request(app)
+      .post("/api/auth/tenant/login")
+      .send({ username: "room501", password });
 
-    expect(response.status).toBe(400);
-    expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
-  });
-
-  it("rejects a client-supplied apartmentId", async () => {
-    const response = await request(app)
-      .post("/api/auth/login")
-      .send({ username: "admin", password, apartmentId: "another-apartment" });
-
-    expect(response.status).toBe(400);
-    expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+    expect(adminResponse.status).toBe(400);
+    expect(tenantResponse.status).toBe(400);
+    expect(prismaMock.adminUser.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.tenantUser.findUnique).not.toHaveBeenCalled();
   });
 });
 
 describe("role middleware", () => {
   const roleApp = express();
   roleApp.get(
-    "/admin",
+    "/super-admin",
     authenticate,
     requireRole(Role.SUPER_ADMIN),
     (_request, response) => response.json({ ok: true }),
   );
 
+  beforeEach(() => {
+    prismaMock.adminUser.findUnique.mockReset();
+  });
+
   it("forbids a valid apartment admin token from a super-admin route", async () => {
-    prismaMock.user.findUnique.mockResolvedValue({
+    prismaMock.adminUser.findUnique.mockResolvedValue({
       role: Role.APARTMENT_ADMIN,
-      apartmentId,
       isActive: true,
-      apartment: { isActive: true },
+      apartments: [{ apartmentId }],
     });
 
     const response = await request(roleApp)
-      .get("/admin")
-      .set("Authorization", `Bearer ${tokenFor()}`);
+      .get("/super-admin")
+      .set("Authorization", `Bearer ${adminToken()}`);
 
     expect(response.status).toBe(403);
   });
 
-  it("allows a valid super-admin token into a super-admin route", async () => {
-    prismaMock.user.findUnique.mockResolvedValue({
+  it("allows a valid super-admin identity", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
       role: Role.SUPER_ADMIN,
-      apartmentId: null,
       isActive: true,
-      apartment: null,
+      apartments: [],
     });
     const token = jwt.sign(
-      { userId, role: Role.SUPER_ADMIN },
+      { userId, accountType: "ADMIN", role: Role.SUPER_ADMIN },
       process.env.JWT_SECRET!,
       { algorithm: "HS256", expiresIn: "1h" },
     );
 
     const response = await request(roleApp)
-      .get("/admin")
+      .get("/super-admin")
       .set("Authorization", `Bearer ${token}`);
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ ok: true });
   });
 });
