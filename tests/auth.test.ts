@@ -5,9 +5,19 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   adminUser: {
     findUnique: vi.fn(),
+    create: vi.fn(),
     update: vi.fn(),
+  },
+  adminApartment: {
+    create: vi.fn(),
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
+  room: {
+    createMany: vi.fn(),
   },
   tenantUser: {
     findUnique: vi.fn(),
@@ -15,6 +25,8 @@ const prismaMock = vi.hoisted(() => ({
   },
   apartment: {
     findFirst: vi.fn(),
+    findMany: vi.fn(),
+    create: vi.fn(),
   },
 }));
 
@@ -30,6 +42,8 @@ const passwordHash = await bcrypt.hash(password, 4);
 const apartmentId = "20000000-0000-4000-8000-000000000000";
 const otherApartmentId = "30000000-0000-4000-8000-000000000000";
 const userId = "10000000-0000-4000-8000-000000000000";
+const accessStartsAt = new Date("2026-01-01T00:00:00.000Z");
+const accessEndsAt = new Date("2027-12-31T23:59:59.999Z");
 const apartment = {
   id: apartmentId,
   name: "ABC Apartment",
@@ -44,7 +58,7 @@ const admin = {
   mustChangePassword: true,
   passwordHash,
   isActive: true,
-  apartments: [{ isPrimary: true, apartment }],
+  apartments: [{ isPrimary: true, accessStartsAt, accessEndsAt, apartment }],
 };
 
 const tenant = {
@@ -90,11 +104,14 @@ describe("separated authentication API", () => {
   beforeEach(() => {
     for (const delegate of [
       prismaMock.adminUser,
+      prismaMock.adminApartment,
+      prismaMock.room,
       prismaMock.tenantUser,
       prismaMock.apartment,
     ]) {
       for (const method of Object.values(delegate)) method.mockReset();
     }
+    prismaMock.$transaction.mockReset();
   });
 
   it("logs an apartment admin in only through the admin portal", async () => {
@@ -122,6 +139,25 @@ describe("separated authentication API", () => {
       role: Role.APARTMENT_ADMIN,
       apartmentId,
     });
+  });
+
+  it("rejects an apartment admin whose access period has expired", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      ...admin,
+      apartments: [{
+        isPrimary: true,
+        accessStartsAt: new Date("2025-01-01T00:00:00.000Z"),
+        accessEndsAt: new Date("2025-12-31T23:59:59.999Z"),
+        apartment,
+      }],
+    });
+
+    const response = await request(app)
+      .post("/api/auth/admin/login")
+      .send({ username: "owner_abc", password });
+
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({ message: "Invalid username or password" });
   });
 
   it("requires an apartment code and scopes a tenant lookup to that apartment", async () => {
@@ -240,8 +276,8 @@ describe("separated authentication API", () => {
       .mockResolvedValueOnce({
         ...admin,
         apartments: [
-          { isPrimary: true, apartment },
-          { isPrimary: false, apartment: otherApartment },
+          { isPrimary: true, accessStartsAt, accessEndsAt, apartment },
+          { isPrimary: false, accessStartsAt, accessEndsAt, apartment: otherApartment },
         ],
       });
 
@@ -290,6 +326,318 @@ describe("separated authentication API", () => {
     expect(tenantResponse.status).toBe(400);
     expect(prismaMock.adminUser.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.tenantUser.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("super-admin apartment provisioning API", () => {
+  function superAdminToken() {
+    return jwt.sign(
+      { userId, accountType: "ADMIN", role: Role.SUPER_ADMIN },
+      process.env.JWT_SECRET!,
+      { algorithm: "HS256", expiresIn: "1h" },
+    );
+  }
+
+  beforeEach(() => {
+    for (const delegate of [
+      prismaMock.adminUser,
+      prismaMock.adminApartment,
+      prismaMock.room,
+      prismaMock.apartment,
+    ]) {
+      for (const method of Object.values(delegate)) method.mockReset();
+    }
+    prismaMock.$transaction.mockReset();
+  });
+
+  it("returns real apartment and room totals to a super admin", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.SUPER_ADMIN,
+      isActive: true,
+      apartments: [],
+    });
+    prismaMock.apartment.findMany.mockResolvedValue([
+      {
+        id: apartmentId,
+        name: "ABC Apartment",
+        slug: "abc",
+        totalRooms: 50,
+        isActive: true,
+        createdAt: new Date("2026-08-30T00:00:00.000Z"),
+        adminUsers: [{
+          isPrimary: true,
+          accessStartsAt,
+          accessEndsAt,
+          adminUser: {
+            id: userId,
+            username: "owner_abc",
+            fullName: "Owner ABC",
+            phone: null,
+            isActive: true,
+          },
+        }],
+      },
+    ]);
+
+    const response = await request(app)
+      .get("/api/superadmin/apartments")
+      .set("Authorization", `Bearer ${superAdminToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.summary).toEqual({
+      totalApartments: 1,
+      activeApartments: 1,
+      inactiveApartments: 0,
+      totalRooms: 50,
+      totalAdmins: 1,
+    });
+    expect(response.body.apartments[0]).toMatchObject({
+      name: "ABC Apartment",
+      totalRooms: 50,
+      admins: [{ username: "owner_abc", isPrimary: true }],
+    });
+  });
+
+  it("creates the apartment, admin role, and assignment in one transaction", async () => {
+    const createdAdminId = "40000000-0000-4000-8000-000000000000";
+    prismaMock.adminUser.findUnique
+      .mockResolvedValueOnce({
+        role: Role.SUPER_ADMIN,
+        isActive: true,
+        apartments: [],
+      })
+      .mockResolvedValueOnce(null);
+    prismaMock.apartment.findFirst.mockResolvedValue(null);
+    prismaMock.apartment.create.mockResolvedValue({
+      id: apartmentId,
+      name: "Green View",
+      slug: "green-view",
+      totalRooms: 72,
+      isActive: true,
+      createdAt: new Date(),
+    });
+    prismaMock.adminUser.create.mockResolvedValue({
+      id: createdAdminId,
+      username: "owner_green",
+      fullName: "Green Owner",
+      phone: "0812345678",
+      role: Role.APARTMENT_ADMIN,
+      isActive: true,
+      mustChangePassword: true,
+    });
+    prismaMock.room.createMany.mockResolvedValue({ count: 72 });
+    prismaMock.adminApartment.create.mockResolvedValue({
+      isPrimary: true,
+      accessStartsAt,
+      accessEndsAt,
+    });
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
+    );
+
+    const response = await request(app)
+      .post("/api/superadmin/apartments")
+      .set("Authorization", `Bearer ${superAdminToken()}`)
+      .send({
+        apartmentName: "Green View",
+        apartmentCode: "green-view",
+        totalRooms: 72,
+        adminFullName: "Green Owner",
+        adminUsername: "owner_green",
+        adminPhone: "0812345678",
+        temporaryPassword: "TempPassword123!",
+        accessStartDate: "2026-01-01",
+        accessEndDate: "2027-12-31",
+      });
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+    expect(prismaMock.apartment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ totalRooms: 72, slug: "green-view" }),
+    }));
+    expect(prismaMock.room.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        { apartmentId, roomNumber: "001" },
+        { apartmentId, roomNumber: "072" },
+      ]),
+    });
+    const adminCreate = prismaMock.adminUser.create.mock.calls[0]?.[0];
+    expect(adminCreate.data).toMatchObject({
+      role: Role.APARTMENT_ADMIN,
+      mustChangePassword: true,
+      username: "owner_green",
+    });
+    expect(adminCreate.data.passwordHash).not.toBe("TempPassword123!");
+    expect(await bcrypt.compare("TempPassword123!", adminCreate.data.passwordHash)).toBe(true);
+    expect(prismaMock.adminApartment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        adminUserId: createdAdminId,
+        apartmentId,
+        isPrimary: true,
+        accessStartsAt,
+        accessEndsAt,
+      }),
+    }));
+  });
+
+  it("forbids an apartment admin from provisioning another admin", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.APARTMENT_ADMIN,
+      isActive: true,
+      apartments: [{ apartmentId }],
+    });
+
+    const response = await request(app)
+      .post("/api/superadmin/apartments")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({
+        apartmentName: "Green View",
+        apartmentCode: "green-view",
+        totalRooms: 72,
+        adminFullName: "Green Owner",
+        adminUsername: "owner_green",
+        temporaryPassword: "TempPassword123!",
+        accessStartDate: "2026-01-01",
+        accessEndDate: "2027-12-31",
+      });
+
+    expect(response.status).toBe(403);
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("lets a super admin suspend an apartment admin account", async () => {
+    prismaMock.adminUser.findUnique
+      .mockResolvedValueOnce({
+        role: Role.SUPER_ADMIN,
+        isActive: true,
+        apartments: [],
+      })
+      .mockResolvedValueOnce({ id: userId, role: Role.APARTMENT_ADMIN });
+    prismaMock.adminUser.update.mockResolvedValue({
+      id: userId,
+      username: "owner_abc",
+      fullName: "Owner ABC",
+      isActive: false,
+    });
+
+    const response = await request(app)
+      .patch(`/api/superadmin/admins/${userId}/status`)
+      .set("Authorization", `Bearer ${superAdminToken()}`)
+      .send({ isActive: false });
+
+    expect(response.status).toBe(200);
+    expect(response.body.admin.isActive).toBe(false);
+    expect(prismaMock.adminUser.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: userId },
+      data: { isActive: false },
+    }));
+  });
+
+  it("adds or subtracts days from an admin access end date", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.SUPER_ADMIN,
+      isActive: true,
+      apartments: [],
+    });
+    prismaMock.adminApartment.findUnique.mockResolvedValue({
+      accessStartsAt,
+      accessEndsAt,
+      adminUser: { role: Role.APARTMENT_ADMIN },
+    });
+    const reducedEndDate = new Date(
+      accessEndsAt.getTime() - 30 * 24 * 60 * 60 * 1_000,
+    );
+    prismaMock.adminApartment.update.mockResolvedValue({
+      accessStartsAt,
+      accessEndsAt: reducedEndDate,
+    });
+
+    const response = await request(app)
+      .patch(`/api/superadmin/apartments/${apartmentId}/admins/${userId}/access`)
+      .set("Authorization", `Bearer ${superAdminToken()}`)
+      .send({ days: -30 });
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.adminApartment.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { accessEndsAt: reducedEndDate },
+    }));
+    expect(response.body.access).toMatchObject({
+      accessStatus: "ACTIVE",
+    });
+  });
+
+  it("returns every room with occupied and available totals for an admin", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.SUPER_ADMIN,
+      isActive: true,
+      apartments: [],
+    });
+    prismaMock.adminApartment.findUnique.mockResolvedValue({
+      adminUser: {
+        id: userId,
+        username: "owner_abc",
+        fullName: "Owner ABC",
+        role: Role.APARTMENT_ADMIN,
+      },
+      apartment: {
+        id: apartmentId,
+        name: "ABC Apartment",
+        slug: "abc",
+        rooms: [
+          { id: "50000000-0000-4000-8000-000000000001", roomNumber: "101", isPlaceholder: false },
+          { id: "50000000-0000-4000-8000-000000000002", roomNumber: "102", isPlaceholder: false },
+          { id: "50000000-0000-4000-8000-000000000003", roomNumber: "103", isPlaceholder: false },
+        ],
+        tenants: [{
+          id: "60000000-0000-4000-8000-000000000001",
+          username: "room101",
+          fullName: "Tenant One",
+          roomNumber: "101",
+          isActive: true,
+        }],
+      },
+    });
+
+    const response = await request(app)
+      .get(`/api/superadmin/apartments/${apartmentId}/admins/${userId}/rooms`)
+      .set("Authorization", `Bearer ${superAdminToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.summary).toEqual({
+      totalRooms: 3,
+      occupiedRooms: 1,
+      availableRooms: 2,
+    });
+    expect(response.body.rooms).toEqual([
+      expect.objectContaining({ roomNumber: "101", status: "OCCUPIED" }),
+      expect.objectContaining({ roomNumber: "102", status: "AVAILABLE", tenant: null }),
+      expect.objectContaining({ roomNumber: "103", status: "AVAILABLE", tenant: null }),
+    ]);
+  });
+
+  it("rejects invalid room counts before opening a transaction", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.SUPER_ADMIN,
+      isActive: true,
+      apartments: [],
+    });
+
+    const response = await request(app)
+      .post("/api/superadmin/apartments")
+      .set("Authorization", `Bearer ${superAdminToken()}`)
+      .send({
+        apartmentName: "Green View",
+        apartmentCode: "green-view",
+        totalRooms: 0,
+        adminFullName: "Green Owner",
+        adminUsername: "owner_green",
+        temporaryPassword: "TempPassword123!",
+        accessStartDate: "2026-01-01",
+        accessEndDate: "2027-12-31",
+      });
+
+    expect(response.status).toBe(400);
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });
 

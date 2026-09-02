@@ -46,6 +46,7 @@ async function identityIsActive(identity: JwtPayload): Promise<boolean> {
     );
   }
 
+  const now = new Date();
   const admin = await prisma.adminUser.findUnique({
     where: { id: identity.userId },
     select: {
@@ -56,6 +57,8 @@ async function identityIsActive(identity: JwtPayload): Promise<boolean> {
             where: {
               apartmentId: identity.apartmentId,
               apartment: { isActive: true },
+              accessStartsAt: { lte: now },
+              accessEndsAt: { gte: now },
             },
             select: { apartmentId: true },
           }

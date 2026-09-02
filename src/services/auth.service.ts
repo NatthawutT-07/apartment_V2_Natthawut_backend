@@ -37,6 +37,7 @@ export type AuthIdentity = {
 const adminSelect = {
   id: true,
   username: true,
+  fullName: true,
   phone: true,
   role: true,
   mustChangePassword: true,
@@ -46,6 +47,8 @@ const adminSelect = {
     orderBy: { isPrimary: "desc" as const },
     select: {
       isPrimary: true,
+      accessStartsAt: true,
+      accessEndsAt: true,
       apartment: { select: { id: true, name: true, slug: true } },
     },
   },
@@ -54,6 +57,8 @@ const adminSelect = {
 const tenantSelect = {
   id: true,
   username: true,
+  fullName: true,
+  roomNumber: true,
   phone: true,
   apartmentId: true,
   mustChangePassword: true,
@@ -78,14 +83,25 @@ function publicAdmin(
   admin: {
     id: string;
     username: string;
+    fullName: string | null;
     phone: string | null;
     role: Role;
     mustChangePassword: boolean;
-    apartments: Array<{ apartment: ApartmentSummary }>;
+    apartments: Array<{
+      apartment: ApartmentSummary;
+      accessStartsAt: Date;
+      accessEndsAt: Date;
+    }>;
   },
   activeApartmentId?: string,
 ) {
-  const apartments = admin.apartments.map(({ apartment }) => apartment);
+  const now = new Date();
+  const apartments = admin.apartments
+    .filter(
+      ({ accessStartsAt, accessEndsAt }) =>
+        accessStartsAt <= now && accessEndsAt >= now,
+    )
+    .map(({ apartment }) => apartment);
   const activeApartment = activeApartmentId
     ? apartments.find((apartment) => apartment.id === activeApartmentId)
     : apartments[0];
@@ -93,6 +109,8 @@ function publicAdmin(
   return {
     id: admin.id,
     username: admin.username,
+    fullName: admin.fullName,
+    roomNumber: null,
     phone: admin.phone,
     role: admin.role,
     accountType: "ADMIN" as const,
@@ -106,6 +124,8 @@ function publicAdmin(
 function publicTenant(tenant: {
   id: string;
   username: string;
+  fullName: string;
+  roomNumber: string;
   phone: string | null;
   apartmentId: string;
   mustChangePassword: boolean;
@@ -114,6 +134,8 @@ function publicTenant(tenant: {
   return {
     id: tenant.id,
     username: tenant.username,
+    fullName: tenant.fullName,
+    roomNumber: tenant.roomNumber,
     phone: tenant.phone,
     role: Role.TENANT,
     accountType: "TENANT" as const,
@@ -136,7 +158,7 @@ export async function loginAdmin(username: string, password: string) {
 
   const hasApartmentAccess =
     admin?.role === Role.SUPER_ADMIN ||
-    (admin?.role === Role.APARTMENT_ADMIN && Boolean(admin.apartments.length));
+    (admin?.role === Role.APARTMENT_ADMIN && Boolean(publicAdmin(admin).apartments.length));
   const matches = await passwordMatches(password, admin?.passwordHash);
 
   if (!admin?.isActive || !hasApartmentAccess || !matches) {
@@ -197,7 +219,9 @@ export async function getCurrentUser(identity: AuthIdentity) {
 
     if (
       identity.apartmentId &&
-      !admin.apartments.some(({ apartment }) => apartment.id === identity.apartmentId)
+      !publicAdmin(admin, identity.apartmentId).apartments.some(
+        (apartment) => apartment.id === identity.apartmentId,
+      )
     ) {
       throw new AppError(403, "Apartment access is no longer available");
     }
@@ -234,7 +258,9 @@ export async function switchAdminApartment(identity: AuthIdentity, apartmentId: 
 
   if (
     !admin?.isActive ||
-    !admin.apartments.some(({ apartment }) => apartment.id === apartmentId)
+    !publicAdmin(admin, apartmentId).apartments.some(
+      (apartment) => apartment.id === apartmentId,
+    )
   ) {
     throw new AppError(403, "Apartment access is not available");
   }
