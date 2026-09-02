@@ -17,6 +17,8 @@ model AdminUser {
   isActive           Boolean          @default(true)
   mustChangePassword Boolean          @default(true)
   apartments         AdminApartment[]
+  contactsCreated    ApartmentContact[]
+  lineInvitesCreated LineLinkInvite[]
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -30,15 +32,24 @@ model TenantUser {
   username           String    @db.VarChar(100)
   fullName           String    @db.VarChar(200)
   roomNumber         String    @db.VarChar(20)
+  floor              String?   @db.VarChar(20)
+  idCard             String?   @db.VarChar(30)
+  moveInDate         DateTime  @default(now())
+  moveOutDate        DateTime?
   passwordHash       String
   phone              String?   @db.VarChar(30)
   isActive           Boolean   @default(true)
   mustChangePassword Boolean   @default(true)
+  bills              Bill[]
+  lineAccount        TenantLineAccount?
+  lineInvites        LineLinkInvite[]
+  lineNotifications  LineNotification[]
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   @@unique([apartmentId, username])
   @@unique([apartmentId, roomNumber])
+  @@unique([apartmentId, idCard])
   @@index([username])
   @@map("User_Tenant")
 }
@@ -67,6 +78,10 @@ model Apartment {
   adminUsers AdminApartment[]
   rooms      Room[]
   tenants    TenantUser[]
+  billingItems ApartmentBillingItem[]
+  bills      Bill[]
+  contacts   ApartmentContact[]
+  lineAccounts TenantLineAccount[]
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
 }
@@ -76,6 +91,7 @@ model Room {
   apartmentId   String    @db.Uuid
   apartment     Apartment @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
   roomNumber    String    @db.VarChar(20)
+  floor         String?   @db.VarChar(20)
   isPlaceholder Boolean   @default(false)
   isActive      Boolean   @default(true)
   createdAt     DateTime  @default(now())
@@ -85,8 +101,189 @@ model Room {
   @@index([apartmentId, isActive])
 }
 
+model ApartmentBillingItem {
+  id              String             @id @default(uuid()) @db.Uuid
+  apartmentId     String             @db.Uuid
+  apartment       Apartment          @relation(fields: [apartmentId], references: [id], onDelete: Cascade)
+  name            String             @db.VarChar(100)
+  kind            BillingItemKind
+  calculationType BillingCalculation
+  unitPrice       Decimal            @db.Decimal(12, 2)
+  isActive        Boolean            @default(true)
+  sortOrder       Int                @default(0)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([apartmentId, name])
+  @@index([apartmentId, isActive, sortOrder])
+}
+
+model Bill {
+  id            String      @id @default(uuid()) @db.Uuid
+  apartmentId   String      @db.Uuid
+  apartment     Apartment   @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
+  tenantId      String?     @db.Uuid
+  tenant        TenantUser? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  tenantName    String      @db.VarChar(200)
+  roomNumber    String      @db.VarChar(20)
+  billingPeriod DateTime
+  status        BillStatus  @default(SENT)
+  totalAmount   Decimal     @db.Decimal(12, 2)
+  issuedAt      DateTime    @default(now())
+  dueDate       DateTime?
+  paidAt        DateTime?
+  items         BillItem[]
+  lineNotifications LineNotification[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([tenantId, billingPeriod])
+  @@index([apartmentId, billingPeriod])
+  @@index([apartmentId, status])
+}
+
+model ApartmentContact {
+  id               String         @id @default(uuid()) @db.Uuid
+  apartmentId      String         @db.Uuid
+  apartment        Apartment      @relation(fields: [apartmentId], references: [id], onDelete: Cascade)
+  createdByAdminId String         @db.Uuid
+  createdByAdmin   AdminUser      @relation(fields: [createdByAdminId], references: [id], onDelete: Restrict)
+  label            String         @db.VarChar(100)
+  contactName      String?        @db.VarChar(150)
+  channel          ContactChannel
+  value            String         @db.VarChar(150)
+  note             String?        @db.VarChar(500)
+  isActive         Boolean        @default(true)
+  sortOrder        Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([apartmentId, isActive, sortOrder])
+  @@index([createdByAdminId])
+}
+
+model LineOaConfig {
+  id                              String   @id @default("central") @db.VarChar(30)
+  oaBasicId                       String   @db.VarChar(100)
+  messagingChannelId              String   @db.VarChar(100)
+  messagingChannelSecretEncrypted String
+  messagingAccessTokenEncrypted   String
+  loginChannelId                  String   @db.VarChar(100)
+  loginChannelSecretEncrypted     String
+  apiBaseUrl                      String   @db.VarChar(500)
+  frontendBaseUrl                 String   @db.VarChar(500)
+  isActive                        Boolean  @default(true)
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+}
+
+model TenantLineAccount {
+  id          String     @id @default(uuid()) @db.Uuid
+  tenantId    String     @unique @db.Uuid
+  tenant      TenantUser @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  apartmentId String     @db.Uuid
+  apartment   Apartment  @relation(fields: [apartmentId], references: [id], onDelete: Cascade)
+  lineUserId  String     @unique @db.VarChar(100)
+  displayName String?    @db.VarChar(200)
+  pictureUrl  String?    @db.VarChar(1000)
+  isActive    Boolean    @default(true)
+  linkedAt    DateTime   @default(now())
+  unlinkedAt  DateTime?
+  blockedAt   DateTime?
+  updatedAt   DateTime   @updatedAt
+
+  @@index([apartmentId, isActive])
+}
+
+model LineLinkInvite {
+  id               String     @id @default(uuid()) @db.Uuid
+  tenantId         String     @db.Uuid
+  tenant           TenantUser @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdByAdminId String     @db.Uuid
+  createdByAdmin   AdminUser  @relation(fields: [createdByAdminId], references: [id], onDelete: Restrict)
+  tokenHash        String     @unique @db.VarChar(64)
+  oauthStateHash   String?    @unique @db.VarChar(64)
+  expiresAt        DateTime
+  startedAt        DateTime?
+  usedAt           DateTime?
+  createdAt        DateTime   @default(now())
+
+  @@index([tenantId, expiresAt])
+  @@index([createdByAdminId])
+}
+
+model LineNotification {
+  id           String                 @id @default(uuid()) @db.Uuid
+  billId       String                 @db.Uuid
+  bill         Bill                   @relation(fields: [billId], references: [id], onDelete: Cascade)
+  tenantId     String?                @db.Uuid
+  tenant       TenantUser?            @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  eventType    LineNotificationType
+  status       LineNotificationStatus @default(PENDING)
+  attemptCount Int                    @default(0)
+  lastError    String?                @db.VarChar(1000)
+  sentAt       DateTime?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@unique([billId, eventType])
+  @@index([status, createdAt])
+  @@index([tenantId])
+}
+
+model BillItem {
+  id              String             @id @default(uuid()) @db.Uuid
+  billId          String             @db.Uuid
+  bill            Bill               @relation(fields: [billId], references: [id], onDelete: Cascade)
+  name            String             @db.VarChar(100)
+  kind            BillingItemKind
+  calculationType BillingCalculation
+  quantity        Decimal            @db.Decimal(12, 3)
+  unitPrice       Decimal            @db.Decimal(12, 2)
+  amount          Decimal            @db.Decimal(12, 2)
+  sortOrder       Int                @default(0)
+  createdAt       DateTime           @default(now())
+
+  @@index([billId, sortOrder])
+}
+
 enum Role {
   SUPER_ADMIN
   APARTMENT_ADMIN
   TENANT
+}
+
+enum BillingItemKind {
+  RENT
+  WATER
+  ELECTRICITY
+  OTHER
+}
+
+enum BillingCalculation {
+  FIXED
+  USAGE
+}
+
+enum BillStatus {
+  DRAFT
+  SENT
+  PAID
+  VOID
+}
+
+enum ContactChannel {
+  PHONE
+  LINE
+}
+
+enum LineNotificationType {
+  BILL_CREATED
+  BILL_PAID
+}
+
+enum LineNotificationStatus {
+  PENDING
+  SENT
+  FAILED
 }

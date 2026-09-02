@@ -18,3 +18,6 @@ superadminRouter.get(
   "/apartments/:apartmentId/admins/:adminId/rooms",
   superadminController.adminApartmentRooms,
 );
+superadminRouter.get("/line-settings", superadminController.lineSettings);
+superadminRouter.put("/line-settings", superadminController.saveLineSettings);
+superadminRouter.post("/line-settings/test", superadminController.testLineSettings);

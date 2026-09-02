@@ -34,3 +34,11 @@ export function getJwtExpiresInSeconds(): number {
 
   return seconds;
 }
+
+export function getLineEncryptionKey(): Buffer {
+  const value = process.env.LINE_CONFIG_ENCRYPTION_KEY;
+  if (!value) throw new Error("LINE_CONFIG_ENCRYPTION_KEY is required to manage LINE settings");
+  const key = Buffer.from(value, "base64");
+  if (key.length !== 32) throw new Error("LINE_CONFIG_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
+  return key;
+}

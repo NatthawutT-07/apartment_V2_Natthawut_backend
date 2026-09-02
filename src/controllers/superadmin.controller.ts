@@ -7,6 +7,8 @@ import {
   createApartmentAdminSchema,
   updateAdminStatusSchema,
 } from "../validation/superadmin.validation.js";
+import { lineSettingsSchema } from "../validation/line.validation.js";
+import * as lineService from "../services/line.service.js";
 
 export const portfolio: RequestHandler = async (_request, response, next) => {
   try {
@@ -62,4 +64,16 @@ export const adminApartmentRooms: RequestHandler = async (request, response, nex
   } catch (error) {
     next(error);
   }
+};
+
+export const lineSettings: RequestHandler = async (_request, response, next) => {
+  try { response.json(await lineService.getPublicLineSettings()); } catch (error) { next(error); }
+};
+
+export const saveLineSettings: RequestHandler = async (request, response, next) => {
+  try { response.json(await lineService.saveLineSettings(lineSettingsSchema.parse(request.body))); } catch (error) { next(error); }
+};
+
+export const testLineSettings: RequestHandler = async (_request, response, next) => {
+  try { response.json(await lineService.testLineConnection()); } catch (error) { next(error); }
 };

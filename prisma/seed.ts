@@ -81,6 +81,8 @@ function buildTenants(apartmentIndex: number) {
       username: `room${roomNumber}`,
       fullName: `${firstName} ${lastName}`,
       roomNumber,
+      floor: String(floor),
+      idCard: String(1_000_000_000_000 + apartmentIndex * 50 + index),
       phone: `08${phoneSequence}`,
     };
   });
@@ -181,6 +183,14 @@ async function main() {
       })),
       skipDuplicates: true,
     });
+    await prisma.apartmentBillingItem.createMany({
+      data: [
+        { apartmentId: apartment.id, name: "ค่าเช่าห้อง", kind: "RENT", calculationType: "FIXED", unitPrice: 0, sortOrder: 1 },
+        { apartmentId: apartment.id, name: "ค่าน้ำ", kind: "WATER", calculationType: "USAGE", unitPrice: 0, sortOrder: 2 },
+        { apartmentId: apartment.id, name: "ค่าไฟ", kind: "ELECTRICITY", calculationType: "USAGE", unitPrice: 0, sortOrder: 3 },
+      ],
+      skipDuplicates: true,
+    });
 
     for (let offset = 0; offset < tenants.length; offset += 25) {
       const batch = tenants.slice(offset, offset + 25);
@@ -196,6 +206,8 @@ async function main() {
             update: {
               fullName: tenant.fullName,
               roomNumber: tenant.roomNumber,
+              floor: tenant.floor,
+              idCard: tenant.idCard,
               phone: tenant.phone,
               passwordHash: tenantHash,
               isActive: true,

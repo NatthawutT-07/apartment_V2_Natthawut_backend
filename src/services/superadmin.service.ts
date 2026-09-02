@@ -1,5 +1,10 @@
 import bcrypt from "bcrypt";
-import { Prisma, Role } from "../generated/prisma/client.js";
+import {
+  BillingCalculation,
+  BillingItemKind,
+  Prisma,
+  Role,
+} from "../generated/prisma/client.js";
 import { AppError } from "../errors/app-error.js";
 import { prisma } from "../lib/prisma.js";
 import type { CreateApartmentAdminInput } from "../validation/superadmin.validation.js";
@@ -140,6 +145,34 @@ export async function createApartmentAdmin(input: CreateApartmentAdminInput) {
           apartmentId: apartment.id,
           roomNumber: String(index + 1).padStart(roomNumberWidth, "0"),
         })),
+      });
+      await transaction.apartmentBillingItem.createMany({
+        data: [
+          {
+            apartmentId: apartment.id,
+            name: "ค่าเช่าห้อง",
+            kind: BillingItemKind.RENT,
+            calculationType: BillingCalculation.FIXED,
+            unitPrice: 0,
+            sortOrder: 1,
+          },
+          {
+            apartmentId: apartment.id,
+            name: "ค่าน้ำ",
+            kind: BillingItemKind.WATER,
+            calculationType: BillingCalculation.USAGE,
+            unitPrice: 0,
+            sortOrder: 2,
+          },
+          {
+            apartmentId: apartment.id,
+            name: "ค่าไฟ",
+            kind: BillingItemKind.ELECTRICITY,
+            calculationType: BillingCalculation.USAGE,
+            unitPrice: 0,
+            sortOrder: 3,
+          },
+        ],
       });
 
       const admin = await transaction.adminUser.create({

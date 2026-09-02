@@ -18,15 +18,65 @@ const prismaMock = vi.hoisted(() => ({
   },
   room: {
     createMany: vi.fn(),
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+  },
+  apartmentBillingItem: {
+    createMany: vi.fn(),
+    findMany: vi.fn(),
+    create: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
   },
   tenantUser: {
     findUnique: vi.fn(),
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    delete: vi.fn(),
     update: vi.fn(),
+  },
+  bill: {
+    count: vi.fn(),
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
+  apartmentContact: {
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
   },
   apartment: {
     findFirst: vi.fn(),
     findMany: vi.fn(),
+    findUnique: vi.fn(),
     create: vi.fn(),
+  },
+  lineOaConfig: {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+  },
+  tenantLineAccount: {
+    findFirst: vi.fn(),
+    updateMany: vi.fn(),
+    upsert: vi.fn(),
+  },
+  lineLinkInvite: {
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  },
+  lineNotification: {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+    update: vi.fn(),
   },
 }));
 
@@ -106,6 +156,7 @@ describe("separated authentication API", () => {
       prismaMock.adminUser,
       prismaMock.adminApartment,
       prismaMock.room,
+      prismaMock.apartmentBillingItem,
       prismaMock.tenantUser,
       prismaMock.apartment,
     ]) {
@@ -343,7 +394,9 @@ describe("super-admin apartment provisioning API", () => {
       prismaMock.adminUser,
       prismaMock.adminApartment,
       prismaMock.room,
+      prismaMock.apartmentBillingItem,
       prismaMock.apartment,
+      prismaMock.lineOaConfig,
     ]) {
       for (const method of Object.values(delegate)) method.mockReset();
     }
@@ -426,6 +479,7 @@ describe("super-admin apartment provisioning API", () => {
       mustChangePassword: true,
     });
     prismaMock.room.createMany.mockResolvedValue({ count: 72 });
+    prismaMock.apartmentBillingItem.createMany.mockResolvedValue({ count: 3 });
     prismaMock.adminApartment.create.mockResolvedValue({
       isPrimary: true,
       accessStartsAt,
@@ -639,6 +693,166 @@ describe("super-admin apartment provisioning API", () => {
     expect(response.status).toBe(400);
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
+
+  it("returns LINE settings to a super admin without exposing stored secrets", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.SUPER_ADMIN,
+      isActive: true,
+      apartments: [],
+    });
+    prismaMock.lineOaConfig.findUnique.mockResolvedValue({
+      id: "central",
+      oaBasicId: "@apartment",
+      messagingChannelId: "1234567890",
+      messagingChannelSecretEncrypted: "encrypted-messaging-secret",
+      messagingAccessTokenEncrypted: "encrypted-access-token",
+      loginChannelId: "9876543210",
+      loginChannelSecretEncrypted: "encrypted-login-secret",
+      apiBaseUrl: "https://api.example.com",
+      frontendBaseUrl: "https://app.example.com",
+      isActive: true,
+      updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+    });
+
+    const response = await request(app)
+      .get("/api/superadmin/line-settings")
+      .set("Authorization", `Bearer ${superAdminToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      configured: true,
+      oaBasicId: "@apartment",
+      hasMessagingChannelSecret: true,
+      hasMessagingAccessToken: true,
+      hasLoginChannelSecret: true,
+    });
+    expect(JSON.stringify(response.body)).not.toContain("encrypted-");
+  });
+});
+
+describe("apartment-admin operations API", () => {
+  const tenantId = "50000000-0000-4000-8000-000000000000";
+
+  beforeEach(() => {
+    for (const delegate of [
+      prismaMock.adminUser,
+      prismaMock.apartment,
+      prismaMock.room,
+      prismaMock.tenantUser,
+      prismaMock.apartmentBillingItem,
+      prismaMock.bill,
+      prismaMock.lineNotification,
+    ]) {
+      for (const method of Object.values(delegate)) method.mockReset();
+    }
+    prismaMock.$transaction.mockReset();
+    prismaMock.lineNotification.findUnique.mockResolvedValue(null);
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.APARTMENT_ADMIN,
+      isActive: true,
+      apartments: [{ apartmentId }],
+    });
+  });
+
+  it("returns apartment-scoped room cards and live occupancy totals", async () => {
+    prismaMock.apartment.findUnique.mockResolvedValue({
+      id: apartmentId,
+      name: "ABC Apartment",
+      rooms: [
+        { id: "60000000-0000-4000-8000-000000000001", roomNumber: "101", floor: "1", isPlaceholder: false },
+        { id: "60000000-0000-4000-8000-000000000002", roomNumber: "102", floor: "1", isPlaceholder: false },
+      ],
+      tenants: [{ id: tenantId, username: "room101", fullName: "Tenant One", roomNumber: "101", floor: "1", phone: "0800000000" }],
+    });
+    prismaMock.bill.count.mockResolvedValue(2);
+
+    const response = await request(app)
+      .get("/api/admin/dashboard")
+      .set("Authorization", `Bearer ${adminToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.summary).toEqual({
+      totalRooms: 2,
+      occupiedRooms: 1,
+      availableRooms: 1,
+      unpaidBills: 2,
+    });
+    expect(response.body.rooms).toEqual([
+      expect.objectContaining({ roomNumber: "101", status: "OCCUPIED", tenant: expect.objectContaining({ id: tenantId }) }),
+      expect.objectContaining({ roomNumber: "102", status: "AVAILABLE", tenant: null }),
+    ]);
+    expect(prismaMock.apartment.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: apartmentId },
+    }));
+  });
+
+  it("creates a sent bill with server-calculated line items and total", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue({
+      id: tenantId,
+      fullName: "Tenant One",
+      roomNumber: "101",
+    });
+    prismaMock.bill.create.mockResolvedValue({
+      id: "70000000-0000-4000-8000-000000000000",
+      billingPeriod: new Date("2026-08-01T00:00:00.000Z"),
+      status: "SENT",
+      totalAmount: 1675,
+    });
+    prismaMock.lineNotification.upsert.mockResolvedValue({
+      id: "71000000-0000-4000-8000-000000000000",
+    });
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
+    );
+
+    const response = await request(app)
+      .post("/api/admin/bills")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({
+        tenantId,
+        billingMonth: "2026-08",
+        dueDate: "2026-08-31",
+        items: [
+          { name: "ค่าเช่าห้อง", kind: "RENT", calculationType: "FIXED", quantity: 1, unitPrice: 1500 },
+          { name: "ค่าน้ำ", kind: "WATER", calculationType: "USAGE", quantity: 10, unitPrice: 7.5 },
+          { name: "ค่าไฟ", kind: "ELECTRICITY", calculationType: "USAGE", quantity: 20, unitPrice: 5 },
+        ],
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.bill).toMatchObject({ status: "SENT", totalAmount: 1675 });
+    expect(prismaMock.bill.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        apartmentId,
+        tenantId,
+        tenantName: "Tenant One",
+        roomNumber: "101",
+        status: "SENT",
+        totalAmount: 1675,
+        items: {
+          create: [
+            expect.objectContaining({ name: "ค่าเช่าห้อง", amount: 1500 }),
+            expect.objectContaining({ name: "ค่าน้ำ", amount: 75 }),
+            expect.objectContaining({ name: "ค่าไฟ", amount: 100 }),
+          ],
+        },
+      }),
+    }));
+  });
+
+  it("rejects tenant and billing identifiers from another apartment", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue(null);
+
+    const response = await request(app)
+      .get(`/api/admin/tenants/${tenantId}/bill-template`)
+      .set("Authorization", `Bearer ${adminToken()}`);
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ message: "Tenant not found" });
+    expect(prismaMock.tenantUser.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ apartmentId, id: tenantId }),
+    }));
+  });
 });
 
 describe("role middleware", () => {
@@ -685,5 +899,127 @@ describe("role middleware", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(response.status).toBe(200);
+  });
+});
+
+describe("tenant portal and payment lifecycle API", () => {
+  const billId = "70000000-0000-4000-8000-000000000000";
+  const contactId = "80000000-0000-4000-8000-000000000000";
+
+  beforeEach(() => {
+    for (const delegate of [prismaMock.adminUser, prismaMock.tenantUser, prismaMock.bill, prismaMock.apartmentContact, prismaMock.lineNotification]) {
+      for (const method of Object.values(delegate)) method.mockReset();
+    }
+    prismaMock.tenantUser.findUnique.mockResolvedValue({
+      apartmentId,
+      isActive: true,
+      apartment: { isActive: true },
+    });
+    prismaMock.$transaction.mockReset();
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
+    );
+    prismaMock.lineNotification.findUnique.mockResolvedValue(null);
+    prismaMock.lineNotification.upsert.mockResolvedValue({ id: "71000000-0000-4000-8000-000000000000" });
+  });
+
+  it("shows the current sent bill and its line items to only that tenant", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue({
+      id: userId,
+      username: "room501",
+      fullName: "Somchai Tenant",
+      roomNumber: "501",
+      floor: "5",
+      phone: "0812345678",
+      moveInDate: new Date("2026-08-01T00:00:00.000Z"),
+      moveOutDate: null,
+      apartment: { id: apartmentId, name: "ABC Apartment", slug: "abc" },
+    });
+    prismaMock.bill.findFirst.mockResolvedValue({
+      id: billId,
+      billingPeriod: new Date("2026-08-01T00:00:00.000Z"),
+      totalAmount: 1675,
+      issuedAt: new Date("2026-08-25T00:00:00.000Z"),
+      dueDate: new Date("2026-08-31T00:00:00.000Z"),
+      status: "SENT",
+      items: [{ id: "90000000-0000-4000-8000-000000000000", name: "ค่าน้ำ", kind: "WATER", calculationType: "USAGE", quantity: 10, unitPrice: 7.5, amount: 75 }],
+    });
+
+    const response = await request(app)
+      .get("/api/tenant/dashboard")
+      .set("Authorization", `Bearer ${tenantToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.tenant).toMatchObject({ fullName: "Somchai Tenant", roomNumber: "501" });
+    expect(response.body.currentBill).toMatchObject({ id: billId, status: "SENT", totalAmount: 1675 });
+    expect(response.body.currentBill.items[0]).toMatchObject({ name: "ค่าน้ำ", quantity: 10, amount: 75 });
+    expect(prismaMock.bill.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tenantId: userId, apartmentId, status: "SENT" },
+    }));
+  });
+
+  it("returns no current bill after all bills are paid", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue({
+      id: userId,
+      username: "room501",
+      fullName: "Somchai Tenant",
+      roomNumber: "501",
+      floor: "5",
+      phone: null,
+      moveInDate: new Date(),
+      moveOutDate: null,
+      apartment: { id: apartmentId, name: "ABC Apartment", slug: "abc" },
+    });
+    prismaMock.bill.findFirst.mockResolvedValue(null);
+
+    const response = await request(app)
+      .get("/api/tenant/dashboard")
+      .set("Authorization", `Bearer ${tenantToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.currentBill).toBeNull();
+  });
+
+  it("returns only active contacts from the tenant apartment", async () => {
+    prismaMock.apartmentContact.findMany.mockResolvedValue([{
+      id: contactId,
+      label: "ช่างไฟ",
+      contactName: "Somchai Electric",
+      channel: "PHONE",
+      value: "0812345678",
+      note: "ติดต่อช่วง 08:00-18:00",
+    }]);
+
+    const response = await request(app)
+      .get("/api/tenant/contacts")
+      .set("Authorization", `Bearer ${tenantToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.contacts[0]).toMatchObject({ label: "ช่างไฟ", channel: "PHONE" });
+    expect(prismaMock.apartmentContact.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { apartmentId, isActive: true },
+    }));
+  });
+
+  it("lets the apartment admin confirm payment for tenant history", async () => {
+    prismaMock.tenantUser.findUnique.mockReset();
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.APARTMENT_ADMIN,
+      isActive: true,
+      apartments: [{ apartmentId }],
+    });
+    prismaMock.bill.findFirst.mockResolvedValue({ id: billId, status: "SENT" });
+    prismaMock.bill.update.mockResolvedValue({ id: billId, tenantId: userId, status: "PAID", paidAt: new Date() });
+
+    const response = await request(app)
+      .patch(`/api/admin/bills/${billId}/paid`)
+      .set("Authorization", `Bearer ${adminToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.bill.status).toBe("PAID");
+    expect(prismaMock.bill.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: billId },
+      data: expect.objectContaining({ status: "PAID", paidAt: expect.any(Date) }),
+    }));
   });
 });

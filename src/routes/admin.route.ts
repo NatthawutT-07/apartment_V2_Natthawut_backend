@@ -1,0 +1,28 @@
+import { Router } from "express";
+import { Role } from "../generated/prisma/client.js";
+import * as adminController from "../controllers/admin.controller.js";
+import { authenticate } from "../middleware/auth.middleware.js";
+import { requireRole } from "../middleware/role.middleware.js";
+
+export const adminRouter = Router();
+adminRouter.use(authenticate, requireRole(Role.APARTMENT_ADMIN));
+adminRouter.get("/dashboard", adminController.dashboard);
+adminRouter.get("/billing-items", adminController.billingItems);
+adminRouter.post("/billing-items", adminController.createBillingItem);
+adminRouter.patch("/billing-items/:itemId", adminController.updateBillingItem);
+adminRouter.delete("/billing-items/:itemId", adminController.deleteBillingItem);
+adminRouter.get("/tenants", adminController.tenants);
+adminRouter.get("/tenants/form-options", adminController.tenantFormOptions);
+adminRouter.post("/tenants", adminController.createTenant);
+adminRouter.delete("/tenants/:tenantId", adminController.deleteTenant);
+adminRouter.get("/tenants/:tenantId/bill-template", adminController.billTemplate);
+adminRouter.post("/bills", adminController.createBill);
+adminRouter.get("/bills", adminController.bills);
+adminRouter.patch("/bills/:billId/paid", adminController.markBillPaid);
+adminRouter.get("/contacts", adminController.contacts);
+adminRouter.post("/contacts", adminController.createContact);
+adminRouter.patch("/contacts/:contactId", adminController.updateContact);
+adminRouter.delete("/contacts/:contactId", adminController.deleteContact);
+adminRouter.post("/tenants/:tenantId/line-invite", adminController.createLineInvite);
+adminRouter.delete("/tenants/:tenantId/line-link", adminController.disconnectTenantLine);
+adminRouter.post("/bills/:billId/line-retry", adminController.retryBillLine);
