@@ -42,3 +42,55 @@ export function getLineEncryptionKey(): Buffer {
   if (key.length !== 32) throw new Error("LINE_CONFIG_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
   return key;
 }
+
+export type LineEnvironmentConfig = {
+  managedByEnvironment: true;
+  configured: boolean;
+  missingEnvironmentVariables: string[];
+  oaBasicId: string;
+  messagingChannelId: string;
+  messagingChannelSecret: string;
+  messagingAccessToken: string;
+  loginChannelId: string;
+  loginChannelSecret: string;
+  apiBaseUrl: string;
+  frontendBaseUrl: string;
+  isActive: boolean;
+};
+
+export function getLineEnvironmentConfig(): LineEnvironmentConfig | null {
+  if ((process.env.LINE_CONFIG_SOURCE ?? "").trim().toLowerCase() !== "env") return null;
+
+  const values = {
+    oaBasicId: process.env.LINE_OA_BASIC_ID?.trim() ?? "",
+    messagingChannelId: process.env.LINE_MESSAGING_CHANNEL_ID?.trim() ?? "",
+    messagingChannelSecret: process.env.LINE_MESSAGING_CHANNEL_SECRET?.trim() ?? "",
+    messagingAccessToken: process.env.LINE_MESSAGING_ACCESS_TOKEN?.trim() ?? "",
+    loginChannelId: process.env.LINE_LOGIN_CHANNEL_ID?.trim() ?? "",
+    loginChannelSecret: process.env.LINE_LOGIN_CHANNEL_SECRET?.trim() ?? "",
+    apiBaseUrl: process.env.LINE_PUBLIC_API_BASE_URL?.trim() ?? "",
+    frontendBaseUrl: process.env.LINE_FRONTEND_BASE_URL?.trim() ?? "",
+  };
+  const variableByField: Record<keyof typeof values, string> = {
+    oaBasicId: "LINE_OA_BASIC_ID",
+    messagingChannelId: "LINE_MESSAGING_CHANNEL_ID",
+    messagingChannelSecret: "LINE_MESSAGING_CHANNEL_SECRET",
+    messagingAccessToken: "LINE_MESSAGING_ACCESS_TOKEN",
+    loginChannelId: "LINE_LOGIN_CHANNEL_ID",
+    loginChannelSecret: "LINE_LOGIN_CHANNEL_SECRET",
+    apiBaseUrl: "LINE_PUBLIC_API_BASE_URL",
+    frontendBaseUrl: "LINE_FRONTEND_BASE_URL",
+  };
+  const missingEnvironmentVariables = Object.entries(values)
+    .filter(([, value]) => !value)
+    .map(([field]) => variableByField[field as keyof typeof values]);
+  const configured = missingEnvironmentVariables.length === 0;
+
+  return {
+    managedByEnvironment: true,
+    configured,
+    missingEnvironmentVariables,
+    ...values,
+    isActive: configured && (process.env.LINE_OA_ACTIVE ?? "true").trim().toLowerCase() === "true",
+  };
+}

@@ -6,6 +6,7 @@ import {
   Prisma,
 } from "../generated/prisma/client.js";
 import { AppError } from "../errors/app-error.js";
+import { getLineEnvironmentConfig } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import type { LineSettingsInput } from "../validation/line.validation.js";
 import { decryptSecret, encryptSecret } from "./secret.service.js";
@@ -18,6 +19,23 @@ const randomToken = () => crypto.randomBytes(32).toString("base64url");
 const tokenHash = (value: string) => crypto.createHash("sha256").update(value).digest("hex");
 
 export async function getPublicLineSettings() {
+  const environment = getLineEnvironmentConfig();
+  if (environment) {
+    return {
+      configured: environment.configured,
+      managedByEnvironment: true,
+      missingEnvironmentVariables: environment.missingEnvironmentVariables,
+      oaBasicId: environment.oaBasicId,
+      messagingChannelId: environment.messagingChannelId,
+      loginChannelId: environment.loginChannelId,
+      apiBaseUrl: environment.apiBaseUrl,
+      frontendBaseUrl: environment.frontendBaseUrl,
+      isActive: environment.isActive,
+      hasMessagingChannelSecret: Boolean(environment.messagingChannelSecret),
+      hasMessagingAccessToken: Boolean(environment.messagingAccessToken),
+      hasLoginChannelSecret: Boolean(environment.loginChannelSecret),
+    };
+  }
   const config = await prisma.lineOaConfig.findUnique({ where: { id: CENTRAL_CONFIG_ID } });
   if (!config) return { configured: false, isActive: false };
   return {
@@ -36,6 +54,9 @@ export async function getPublicLineSettings() {
 }
 
 export async function saveLineSettings(input: LineSettingsInput) {
+  if (getLineEnvironmentConfig()) {
+    throw new AppError(409, "LINE OA settings are managed by backend environment variables");
+  }
   const existing = await prisma.lineOaConfig.findUnique({ where: { id: CENTRAL_CONFIG_ID } });
   if (!existing && (!input.messagingChannelSecret || !input.messagingAccessToken || !input.loginChannelSecret)) {
     throw new AppError(400, "All LINE secrets are required for the first setup");
@@ -70,15 +91,29 @@ export async function saveLineSettings(input: LineSettingsInput) {
 }
 
 async function activeConfig() {
+  const environment = getLineEnvironmentConfig();
+  if (environment) {
+    if (!environment.configured) {
+      throw new AppError(503, `LINE OA environment configuration is incomplete: ${environment.missingEnvironmentVariables.join(", ")}`);
+    }
+    if (!environment.isActive) throw new AppError(503, "LINE OA is inactive");
+    return environment;
+  }
   const config = await prisma.lineOaConfig.findUnique({ where: { id: CENTRAL_CONFIG_ID } });
   if (!config?.isActive) throw new AppError(503, "LINE OA is not configured or inactive");
-  return config;
+  return {
+    ...config,
+    managedByEnvironment: false as const,
+    messagingChannelSecret: decryptSecret(config.messagingChannelSecretEncrypted),
+    messagingAccessToken: decryptSecret(config.messagingAccessTokenEncrypted),
+    loginChannelSecret: decryptSecret(config.loginChannelSecretEncrypted),
+  };
 }
 
 export async function testLineConnection() {
   const config = await activeConfig();
   const response = await fetch("https://api.line.me/v2/bot/info", {
-    headers: { Authorization: `Bearer ${decryptSecret(config.messagingAccessTokenEncrypted)}` },
+    headers: { Authorization: `Bearer ${config.messagingAccessToken}` },
   });
   if (!response.ok) throw new AppError(502, "LINE rejected the Messaging API access token");
   const bot = await response.json() as { displayName?: string; basicId?: string; premiumId?: string };
@@ -152,7 +187,7 @@ export async function completeLineConnect(code: string, state: string) {
   const tokenResponse = await fetch("https://api.line.me/oauth2/v2.1/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUrl, client_id: config.loginChannelId, client_secret: decryptSecret(config.loginChannelSecretEncrypted) }),
+    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUrl, client_id: config.loginChannelId, client_secret: config.loginChannelSecret }),
   });
   if (!tokenResponse.ok) throw new AppError(502, "LINE Login token exchange failed");
   const tokens = await tokenResponse.json() as { access_token: string };
@@ -178,7 +213,7 @@ export async function completeLineConnect(code: string, state: string) {
 export async function handleLineWebhook(rawBody: Buffer, signature: string | undefined) {
   const config = await activeConfig();
   if (!signature) throw new AppError(401, "Missing LINE signature");
-  const expected = crypto.createHmac("sha256", decryptSecret(config.messagingChannelSecretEncrypted)).update(rawBody).digest("base64");
+  const expected = crypto.createHmac("sha256", config.messagingChannelSecret).update(rawBody).digest("base64");
   const received = Buffer.from(signature);
   const valid = received.length === Buffer.byteLength(expected) && crypto.timingSafeEqual(received, Buffer.from(expected));
   if (!valid) throw new AppError(401, "Invalid LINE signature");
@@ -232,7 +267,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
         },
       }],
     };
-    const response = await fetch("https://api.line.me/v2/bot/message/push", { method: "POST", headers: { Authorization: `Bearer ${decryptSecret(config.messagingAccessTokenEncrypted)}`, "Content-Type": "application/json" }, body: JSON.stringify(message) });
+    const response = await fetch("https://api.line.me/v2/bot/message/push", { method: "POST", headers: { Authorization: `Bearer ${config.messagingAccessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(message) });
     if (!response.ok) throw new Error(`LINE push failed with status ${response.status}`);
     await prisma.lineNotification.update({ where: { id: notification.id }, data: { status: LineNotificationStatus.SENT, sentAt: new Date(), attemptCount: { increment: 1 }, lastError: null } });
   } catch (error) {

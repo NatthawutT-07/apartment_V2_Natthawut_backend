@@ -728,6 +728,67 @@ describe("super-admin apartment provisioning API", () => {
     });
     expect(JSON.stringify(response.body)).not.toContain("encrypted-");
   });
+
+  it("reads LINE settings from environment variables without exposing secrets", async () => {
+    const keys = [
+      "LINE_CONFIG_SOURCE",
+      "LINE_OA_ACTIVE",
+      "LINE_OA_BASIC_ID",
+      "LINE_MESSAGING_CHANNEL_ID",
+      "LINE_MESSAGING_CHANNEL_SECRET",
+      "LINE_MESSAGING_ACCESS_TOKEN",
+      "LINE_LOGIN_CHANNEL_ID",
+      "LINE_LOGIN_CHANNEL_SECRET",
+      "LINE_PUBLIC_API_BASE_URL",
+      "LINE_FRONTEND_BASE_URL",
+    ] as const;
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+
+    try {
+      Object.assign(process.env, {
+        LINE_CONFIG_SOURCE: "env",
+        LINE_OA_ACTIVE: "true",
+        LINE_OA_BASIC_ID: "@environment-oa",
+        LINE_MESSAGING_CHANNEL_ID: "messaging-channel-id",
+        LINE_MESSAGING_CHANNEL_SECRET: "environment-messaging-secret",
+        LINE_MESSAGING_ACCESS_TOKEN: "environment-access-token",
+        LINE_LOGIN_CHANNEL_ID: "login-channel-id",
+        LINE_LOGIN_CHANNEL_SECRET: "environment-login-secret",
+        LINE_PUBLIC_API_BASE_URL: "https://api.example.com",
+        LINE_FRONTEND_BASE_URL: "https://app.example.com",
+      });
+      prismaMock.adminUser.findUnique.mockResolvedValue({
+        role: Role.SUPER_ADMIN,
+        isActive: true,
+        apartments: [],
+      });
+
+      const response = await request(app)
+        .get("/api/superadmin/line-settings")
+        .set("Authorization", `Bearer ${superAdminToken()}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        configured: true,
+        managedByEnvironment: true,
+        missingEnvironmentVariables: [],
+        oaBasicId: "@environment-oa",
+        messagingChannelId: "messaging-channel-id",
+        loginChannelId: "login-channel-id",
+        isActive: true,
+      });
+      expect(JSON.stringify(response.body)).not.toContain("environment-messaging-secret");
+      expect(JSON.stringify(response.body)).not.toContain("environment-access-token");
+      expect(JSON.stringify(response.body)).not.toContain("environment-login-secret");
+      expect(prismaMock.lineOaConfig.findUnique).not.toHaveBeenCalled();
+    } finally {
+      for (const key of keys) {
+        const value = previous[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 });
 
 describe("apartment-admin operations API", () => {

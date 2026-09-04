@@ -72,6 +72,9 @@ export async function getDashboard(apartmentId: string) {
             roomNumber: true,
             floor: true,
             phone: true,
+            lineAccount: {
+              select: { displayName: true, isActive: true, blockedAt: true },
+            },
           },
         },
       },
