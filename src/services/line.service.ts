@@ -128,9 +128,16 @@ export async function createTenantLineInvite(apartmentId: string, adminUserId: s
   if (!tenant) throw new AppError(404, "Tenant not found");
   const token = randomToken();
   const expiresAt = new Date(Date.now() + INVITE_LIFETIME_MS);
-  await prisma.lineLinkInvite.create({
-    data: { tenantId, createdByAdminId: adminUserId, tokenHash: tokenHash(token), expiresAt },
-  });
+  const invalidatedAt = new Date();
+  await prisma.$transaction([
+    prisma.lineLinkInvite.updateMany({
+      where: { tenantId, usedAt: null },
+      data: { usedAt: invalidatedAt },
+    }),
+    prisma.lineLinkInvite.create({
+      data: { tenantId, createdByAdminId: adminUserId, tokenHash: tokenHash(token), expiresAt },
+    }),
+  ]);
   return {
     tenant,
     expiresAt,
@@ -201,7 +208,10 @@ export async function completeLineConnect(code: string, state: string) {
         create: { tenantId: invite.tenantId, apartmentId: invite.tenant.apartmentId, lineUserId: profile.userId, displayName: profile.displayName, pictureUrl: profile.pictureUrl },
         update: { lineUserId: profile.userId, displayName: profile.displayName, pictureUrl: profile.pictureUrl, isActive: true, linkedAt: new Date(), unlinkedAt: null, blockedAt: null },
       }),
-      prisma.lineLinkInvite.update({ where: { id: invite.id }, data: { usedAt: new Date() } }),
+      prisma.lineLinkInvite.updateMany({
+        where: { tenantId: invite.tenantId, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
     ]);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new AppError(409, "This LINE account is already linked to another tenant");

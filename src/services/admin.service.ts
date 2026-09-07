@@ -339,7 +339,7 @@ export async function createTenant(apartmentId: string, input: CreateTenantInput
         : null;
       return { tenant, bill };
     });
-    if (result.bill) void sendBillLineNotification(result.bill.id, LineNotificationType.BILL_CREATED).catch(() => undefined);
+    if (result.bill) await sendBillLineNotification(result.bill.id, LineNotificationType.BILL_CREATED);
     return result;
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -415,7 +415,7 @@ export async function createBill(apartmentId: string, input: CreateBillInput) {
     const bill = await prisma.$transaction((transaction) =>
       createBillRecord(transaction, apartmentId, tenant, input),
     );
-    void sendBillLineNotification(bill.id, LineNotificationType.BILL_CREATED).catch(() => undefined);
+    await sendBillLineNotification(bill.id, LineNotificationType.BILL_CREATED);
     return { ...bill, totalAmount: money(bill.totalAmount) };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -470,7 +470,7 @@ export async function markBillPaid(apartmentId: string, billId: string) {
     if (paidBill.tenantId) await queueBillLineNotification(transaction, billId, paidBill.tenantId, LineNotificationType.BILL_PAID);
     return paidBill;
   });
-  if (updated.tenantId) void sendBillLineNotification(billId, LineNotificationType.BILL_PAID).catch(() => undefined);
+  if (updated.tenantId) await sendBillLineNotification(billId, LineNotificationType.BILL_PAID);
   return updated;
 }
 
