@@ -68,14 +68,15 @@ describe("LINE tenant linking", () => {
     prismaMock.lineLinkInvite.findFirst.mockResolvedValue({
       id: "invite-id",
       tenantId,
-      tenant: { apartmentId },
+      tenant: { apartmentId, roomNumber: "101", apartment: { name: "ABC Apartment" } },
     });
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: "user-token" }) })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ userId: "U-line-user", displayName: "Tenant LINE" }),
-      }));
+      })
+      .mockResolvedValueOnce({ ok: true }));
 
     await completeLineConnect("authorization-code", "oauth-state");
 
@@ -87,5 +88,9 @@ describe("LINE tenant linking", () => {
       where: { tenantId, usedAt: null },
       data: { usedAt: expect.any(Date) },
     });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "https://api.line.me/v2/bot/message/push",
+      expect.objectContaining({ body: expect.stringContaining("ABC Apartment") }),
+    );
   });
 });

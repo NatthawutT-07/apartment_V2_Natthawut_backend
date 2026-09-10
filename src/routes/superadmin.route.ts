@@ -9,6 +9,11 @@ export const superadminRouter = Router();
 superadminRouter.use(authenticate, requireRole(Role.SUPER_ADMIN));
 superadminRouter.get("/apartments", superadminController.portfolio);
 superadminRouter.post("/apartments", superadminController.createApartmentAdmin);
+superadminRouter.get("/registrations", superadminController.registrations);
+superadminRouter.post("/registrations/:registrationId/approve", superadminController.approveRegistration);
+superadminRouter.post("/registrations/:registrationId/reject", superadminController.rejectRegistration);
+superadminRouter.get("/custom-plan-inquiries", superadminController.customPlanInquiries);
+superadminRouter.patch("/custom-plan-inquiries/:inquiryId/status", superadminController.updateCustomPlanInquiryStatus);
 superadminRouter.patch("/admins/:adminId/status", superadminController.updateAdminStatus);
 superadminRouter.patch(
   "/apartments/:apartmentId/admins/:adminId/access",

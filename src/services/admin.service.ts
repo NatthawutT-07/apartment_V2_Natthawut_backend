@@ -226,6 +226,7 @@ export async function getTenantFormOptions(apartmentId: string) {
 type BillInput = {
   billingMonth: string;
   dueDate?: string;
+  status?: "SENT" | "PAID";
   items: Array<{
     name: string;
     kind: BillingItemKind;
@@ -248,6 +249,7 @@ async function createBillRecord(
   }));
   const totalAmount = Math.round(items.reduce((total, item) => total + item.amount, 0) * 100) / 100;
 
+  const initialStatus = input.status === "PAID" ? BillStatus.PAID : BillStatus.SENT;
   const bill = await transaction.bill.create({
     data: {
       apartmentId,
@@ -256,7 +258,8 @@ async function createBillRecord(
       roomNumber: tenant.roomNumber,
       billingPeriod: billingPeriod(input.billingMonth),
       dueDate: input.dueDate ? dateAtStart(input.dueDate) : undefined,
-      status: BillStatus.SENT,
+      status: initialStatus,
+      paidAt: initialStatus === BillStatus.PAID ? new Date() : undefined,
       totalAmount,
       items: { create: items },
     },
@@ -267,7 +270,12 @@ async function createBillRecord(
       totalAmount: true,
     },
   });
-  await queueBillLineNotification(transaction, bill.id, tenant.id, LineNotificationType.BILL_CREATED);
+  await queueBillLineNotification(
+    transaction,
+    bill.id,
+    tenant.id,
+    initialStatus === BillStatus.PAID ? LineNotificationType.BILL_PAID : LineNotificationType.BILL_CREATED,
+  );
   return bill;
 }
 
@@ -339,11 +347,14 @@ export async function createTenant(apartmentId: string, input: CreateTenantInput
         : null;
       return { tenant, bill };
     });
-    if (result.bill) await sendBillLineNotification(result.bill.id, LineNotificationType.BILL_CREATED);
+    if (result.bill) await sendBillLineNotification(
+      result.bill.id,
+      result.bill.status === BillStatus.PAID ? LineNotificationType.BILL_PAID : LineNotificationType.BILL_CREATED,
+    );
     return result;
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      throw new AppError(409, "Tenant, username, ID card, or billing month already exists");
+      throw new AppError(409, "Tenant, username, or ID card already exists");
     }
     throw error;
   }
@@ -415,11 +426,14 @@ export async function createBill(apartmentId: string, input: CreateBillInput) {
     const bill = await prisma.$transaction((transaction) =>
       createBillRecord(transaction, apartmentId, tenant, input),
     );
-    await sendBillLineNotification(bill.id, LineNotificationType.BILL_CREATED);
+    await sendBillLineNotification(
+      bill.id,
+      bill.status === BillStatus.PAID ? LineNotificationType.BILL_PAID : LineNotificationType.BILL_CREATED,
+    );
     return { ...bill, totalAmount: money(bill.totalAmount) };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      throw new AppError(409, "A bill for this tenant and month already exists");
+      throw new AppError(409, "Unable to create bill because of duplicate data");
     }
     throw error;
   }
@@ -463,7 +477,7 @@ export async function markBillPaid(apartmentId: string, billId: string) {
   }
   const updated = await prisma.$transaction(async (transaction) => {
     const paidBill = await transaction.bill.update({
-      where: { id: billId },
+      where: { id: billId, apartmentId, status: BillStatus.SENT },
       data: { status: BillStatus.PAID, paidAt: new Date() },
       select: { id: true, tenantId: true, status: true, paidAt: true },
     });
@@ -472,6 +486,23 @@ export async function markBillPaid(apartmentId: string, billId: string) {
   });
   if (updated.tenantId) await sendBillLineNotification(billId, LineNotificationType.BILL_PAID);
   return updated;
+}
+
+export async function voidBill(apartmentId: string, billId: string) {
+  const bill = await prisma.bill.findFirst({
+    where: { id: billId, apartmentId },
+    select: { id: true, status: true },
+  });
+  if (!bill) throw new AppError(404, "Bill not found");
+  if (bill.status === BillStatus.VOID) return bill;
+  if (bill.status !== BillStatus.SENT) {
+    throw new AppError(409, "Only an unpaid bill can be cancelled");
+  }
+  return prisma.bill.update({
+    where: { id: billId, apartmentId, status: BillStatus.SENT },
+    data: { status: BillStatus.VOID },
+    select: { id: true, status: true },
+  });
 }
 
 function publicContact(contact: {

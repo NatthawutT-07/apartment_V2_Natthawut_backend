@@ -73,6 +73,12 @@ export const markBillPaid: RequestHandler = async (request, response, next) => {
     response.json({ bill: await adminService.markBillPaid(apartmentId(request), billId) });
   } catch (error) { next(error); }
 };
+export const voidBill: RequestHandler = async (request, response, next) => {
+  try {
+    const { billId } = billParamsSchema.parse(request.params);
+    response.json({ bill: await adminService.voidBill(apartmentId(request), billId) });
+  } catch (error) { next(error); }
+};
 export const contacts: RequestHandler = async (request, response, next) => {
   try { response.json({ contacts: await adminService.listContacts(apartmentId(request)) }); } catch (error) { next(error); }
 };

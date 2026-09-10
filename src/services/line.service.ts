@@ -187,7 +187,7 @@ export async function completeLineConnect(code: string, state: string) {
   const config = await activeConfig();
   const invite = await prisma.lineLinkInvite.findFirst({
     where: { oauthStateHash: tokenHash(state), usedAt: null, expiresAt: { gt: new Date() } },
-    select: { id: true, tenantId: true, tenant: { select: { apartmentId: true } } },
+    select: { id: true, tenantId: true, tenant: { select: { apartmentId: true, roomNumber: true, apartment: { select: { name: true } } } } },
   });
   if (!invite) throw new AppError(400, "LINE OAuth state is invalid or expired");
   const callbackUrl = `${cleanBaseUrl(config.apiBaseUrl)}/api/line/callback`;
@@ -217,7 +217,20 @@ export async function completeLineConnect(code: string, state: string) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new AppError(409, "This LINE account is already linked to another tenant");
     throw error;
   }
+  await sendLinePush(profile.userId, config.messagingAccessToken, [{
+    type: "text",
+    text: `เชื่อมต่อ LINE OA สำเร็จ\n${invite.tenant.apartment.name}\nห้อง ${invite.tenant.roomNumber}\nจากนี้คุณจะได้รับการแจ้งเตือนบิลผ่านแชตนี้`,
+  }]).catch(() => undefined);
   return { frontendBaseUrl: cleanBaseUrl(config.frontendBaseUrl) };
+}
+
+async function sendLinePush(lineUserId: string, accessToken: string, messages: unknown[]) {
+  const response = await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ to: lineUserId, messages }),
+  });
+  if (!response.ok) throw new Error(`LINE push failed with status ${response.status}`);
 }
 
 export async function handleLineWebhook(rawBody: Buffer, signature: string | undefined) {
@@ -250,7 +263,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
     select: {
       id: true,
       attemptCount: true,
-      bill: { select: { id: true, apartmentId: true, tenantId: true, tenantName: true, roomNumber: true, billingPeriod: true, totalAmount: true, dueDate: true, status: true, tenant: { select: { lineAccount: { select: { lineUserId: true, isActive: true, blockedAt: true } } } } } },
+      bill: { select: { id: true, apartmentId: true, tenantId: true, tenantName: true, roomNumber: true, billingPeriod: true, totalAmount: true, dueDate: true, status: true, apartment: { select: { name: true } }, items: { orderBy: { sortOrder: "asc" }, select: { name: true, quantity: true, unitPrice: true, amount: true } }, tenant: { select: { lineAccount: { select: { lineUserId: true, isActive: true, blockedAt: true } } } } } },
     },
   });
   if (!notification) return;
@@ -260,6 +273,14 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
     if (!account?.isActive || account.blockedAt) throw new Error("Tenant has no active LINE connection");
     const amount = Number(notification.bill.totalAmount).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const isPaid = eventType === LineNotificationType.BILL_PAID;
+    const itemLines = notification.bill.items.slice(0, 8).map((item) => ({
+      type: "box",
+      layout: "horizontal",
+      contents: [
+        { type: "text", text: `${item.name}${Number(item.quantity) !== 1 ? ` × ${Number(item.quantity)}` : ""}`, size: "sm", color: "#4D5B55", flex: 3, wrap: true },
+        { type: "text", text: `฿${Number(item.amount).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, size: "sm", color: "#14231D", align: "end", flex: 2 },
+      ],
+    }));
     const message = {
       to: account.lineUserId,
       messages: [{
@@ -269,7 +290,11 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
           type: "bubble",
           header: { type: "box", layout: "vertical", backgroundColor: isPaid ? "#1F7A5B" : "#174C3C", contents: [{ type: "text", text: isPaid ? "ชำระเงินเรียบร้อย" : "แจ้งบิลประจำเดือน", color: "#FFFFFF", weight: "bold", size: "lg" }] },
           body: { type: "box", layout: "vertical", spacing: "md", contents: [
-            { type: "text", text: `ห้อง ${notification.bill.roomNumber} · ${notification.bill.tenantName}`, size: "sm", color: "#6B756F" },
+            { type: "text", text: notification.bill.apartment.name, weight: "bold", size: "md", color: "#14231D", wrap: true },
+            { type: "text", text: `ห้อง ${notification.bill.roomNumber} · ${notification.bill.tenantName}`, size: "sm", color: "#6B756F", wrap: true },
+            ...itemLines,
+            ...(notification.bill.items.length > 8 ? [{ type: "text", text: `และอีก ${notification.bill.items.length - 8} รายการ`, size: "xs", color: "#6B756F" }] : []),
+            { type: "separator" },
             { type: "text", text: `฿${amount}`, size: "xxl", weight: "bold", color: "#14231D" },
             { type: "text", text: isPaid ? "ระบบบันทึกการชำระเงินแล้ว" : "กรุณาตรวจสอบรายละเอียดและวันครบกำหนด", size: "sm", wrap: true, color: "#6B756F" },
           ] },
@@ -277,8 +302,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
         },
       }],
     };
-    const response = await fetch("https://api.line.me/v2/bot/message/push", { method: "POST", headers: { Authorization: `Bearer ${config.messagingAccessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(message) });
-    if (!response.ok) throw new Error(`LINE push failed with status ${response.status}`);
+    await sendLinePush(account.lineUserId, config.messagingAccessToken, message.messages);
     await prisma.lineNotification.update({ where: { id: notification.id }, data: { status: LineNotificationStatus.SENT, sentAt: new Date(), attemptCount: { increment: 1 }, lastError: null } });
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 1000) : "Unknown LINE delivery error";
@@ -289,6 +313,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
 export async function retryBillLineNotification(apartmentId: string, billId: string) {
   const bill = await prisma.bill.findFirst({ where: { id: billId, apartmentId }, select: { id: true, tenantId: true, status: true } });
   if (!bill?.tenantId) throw new AppError(404, "Bill or active tenant not found");
+  if (bill.status === BillStatus.VOID) throw new AppError(409, "A cancelled bill cannot be sent");
   const eventType = bill.status === BillStatus.PAID ? LineNotificationType.BILL_PAID : LineNotificationType.BILL_CREATED;
   await prisma.lineNotification.upsert({ where: { billId_eventType: { billId, eventType } }, create: { billId, tenantId: bill.tenantId, eventType }, update: { status: LineNotificationStatus.PENDING, lastError: null } });
   await sendBillLineNotification(billId, eventType);

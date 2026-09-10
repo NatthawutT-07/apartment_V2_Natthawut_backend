@@ -996,7 +996,7 @@ describe("tenant portal and payment lifecycle API", () => {
       moveOutDate: null,
       apartment: { id: apartmentId, name: "ABC Apartment", slug: "abc" },
     });
-    prismaMock.bill.findFirst.mockResolvedValue({
+    prismaMock.bill.findMany.mockResolvedValue([{
       id: billId,
       billingPeriod: new Date("2026-08-01T00:00:00.000Z"),
       totalAmount: 1675,
@@ -1004,7 +1004,7 @@ describe("tenant portal and payment lifecycle API", () => {
       dueDate: new Date("2026-08-31T00:00:00.000Z"),
       status: "SENT",
       items: [{ id: "90000000-0000-4000-8000-000000000000", name: "ค่าน้ำ", kind: "WATER", calculationType: "USAGE", quantity: 10, unitPrice: 7.5, amount: 75 }],
-    });
+    }]);
 
     const response = await request(app)
       .get("/api/tenant/dashboard")
@@ -1014,7 +1014,9 @@ describe("tenant portal and payment lifecycle API", () => {
     expect(response.body.tenant).toMatchObject({ fullName: "Somchai Tenant", roomNumber: "501" });
     expect(response.body.currentBill).toMatchObject({ id: billId, status: "SENT", totalAmount: 1675 });
     expect(response.body.currentBill.items[0]).toMatchObject({ name: "ค่าน้ำ", quantity: 10, amount: 75 });
-    expect(prismaMock.bill.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    expect(response.body.unpaidBills).toHaveLength(1);
+    expect(response.body.totalUnpaid).toBe(1675);
+    expect(prismaMock.bill.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { tenantId: userId, apartmentId, status: "SENT" },
     }));
   });
@@ -1031,7 +1033,7 @@ describe("tenant portal and payment lifecycle API", () => {
       moveOutDate: null,
       apartment: { id: apartmentId, name: "ABC Apartment", slug: "abc" },
     });
-    prismaMock.bill.findFirst.mockResolvedValue(null);
+    prismaMock.bill.findMany.mockResolvedValue([]);
 
     const response = await request(app)
       .get("/api/tenant/dashboard")
@@ -1079,7 +1081,7 @@ describe("tenant portal and payment lifecycle API", () => {
     expect(response.status).toBe(200);
     expect(response.body.bill.status).toBe("PAID");
     expect(prismaMock.bill.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: billId },
+      where: { id: billId, apartmentId, status: "SENT" },
       data: expect.objectContaining({ status: "PAID", paidAt: expect.any(Date) }),
     }));
   });

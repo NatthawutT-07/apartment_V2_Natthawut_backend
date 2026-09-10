@@ -9,6 +9,40 @@ import {
 } from "../validation/superadmin.validation.js";
 import { lineSettingsSchema } from "../validation/line.validation.js";
 import * as lineService from "../services/line.service.js";
+import * as registrationService from "../services/registration.service.js";
+import { approveRegistrationSchema, inquiryParamsSchema, registrationParamsSchema, updateInquiryStatusSchema } from "../validation/registration.validation.js";
+
+export const registrations: RequestHandler = async (_request, response, next) => {
+  try { response.json({ registrations: await registrationService.listRegistrations() }); } catch (error) { next(error); }
+};
+
+export const approveRegistration: RequestHandler = async (request, response, next) => {
+  try {
+    const { registrationId } = registrationParamsSchema.parse(request.params);
+    response.json(await registrationService.approveRegistration(registrationId, approveRegistrationSchema.parse(request.body)));
+  } catch (error) { next(error); }
+};
+
+export const rejectRegistration: RequestHandler = async (request, response, next) => {
+  try {
+    const { registrationId } = registrationParamsSchema.parse(request.params);
+    await registrationService.rejectRegistration(registrationId);
+    response.status(204).end();
+  } catch (error) { next(error); }
+};
+
+export const customPlanInquiries: RequestHandler = async (_request, response, next) => {
+  try { response.json({ inquiries: await registrationService.listCustomPlanInquiries() }); } catch (error) { next(error); }
+};
+
+export const updateCustomPlanInquiryStatus: RequestHandler = async (request, response, next) => {
+  try {
+    const { inquiryId } = inquiryParamsSchema.parse(request.params);
+    const { status } = updateInquiryStatusSchema.parse(request.body);
+    await registrationService.updateCustomPlanInquiryStatus(inquiryId, status);
+    response.json({ ok: true });
+  } catch (error) { next(error); }
+};
 
 export const portfolio: RequestHandler = async (_request, response, next) => {
   try {

@@ -43,6 +43,7 @@ const billLineSchema = z.object({
 const billInputSchema = z.object({
   billingMonth: z.string().regex(/^\d{4}-\d{2}$/),
   dueDate: optionalDate,
+  status: z.enum(["SENT", "PAID"]).default("SENT"),
   items: z.array(billLineSchema).min(1).max(100),
 }).strict();
 

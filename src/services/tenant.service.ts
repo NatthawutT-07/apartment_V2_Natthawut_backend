@@ -28,9 +28,9 @@ export async function getTenantProfile(tenantId: string, apartmentId: string) {
 }
 
 export async function getTenantDashboard(tenantId: string, apartmentId: string) {
-  const [tenant, currentBill] = await Promise.all([
+  const [tenant, unpaidBills] = await Promise.all([
     getTenantProfile(tenantId, apartmentId),
-    prisma.bill.findFirst({
+    prisma.bill.findMany({
       where: { tenantId, apartmentId, status: BillStatus.SENT },
       orderBy: [{ billingPeriod: "desc" }, { issuedAt: "desc" }],
       select: {
@@ -57,17 +57,27 @@ export async function getTenantDashboard(tenantId: string, apartmentId: string) 
   ]);
   return {
     tenant,
-    currentBill: currentBill ? {
-      ...currentBill,
-      totalAmount: decimal(currentBill.totalAmount),
-      items: currentBill.items.map((item) => ({
+    // Keep currentBill during the API transition for older clients.
+    currentBill: unpaidBills[0] ? publicBill(unpaidBills[0]) : null,
+    unpaidBills: unpaidBills.map(publicBill),
+    totalUnpaid: unpaidBills.reduce((total, bill) => total + decimal(bill.totalAmount), 0),
+  };
+}
+
+function publicBill<T extends {
+  totalAmount: Prisma.Decimal;
+  items: Array<{ quantity: Prisma.Decimal; unitPrice: Prisma.Decimal; amount: Prisma.Decimal }>;
+}>(bill: T) {
+  return {
+      ...bill,
+      totalAmount: decimal(bill.totalAmount),
+      items: bill.items.map((item) => ({
         ...item,
         quantity: decimal(item.quantity),
         unitPrice: decimal(item.unitPrice),
         amount: decimal(item.amount),
       })),
-    } : null,
-  };
+    };
 }
 
 export async function getPaymentHistory(tenantId: string, apartmentId: string) {

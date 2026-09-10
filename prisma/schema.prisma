@@ -86,6 +86,56 @@ model Apartment {
   updatedAt  DateTime         @updatedAt
 }
 
+model AdminRegistration {
+  id                 String             @id @default(uuid()) @db.Uuid
+  plan               RegistrationPlan
+  status             RegistrationStatus @default(PENDING)
+  firstNameTh        String             @db.VarChar(100)
+  lastNameTh         String             @db.VarChar(100)
+  firstNameEn        String             @db.VarChar(100)
+  lastNameEn         String             @db.VarChar(100)
+  birthDate          DateTime
+  phone              String             @db.VarChar(30)
+  email              String             @db.VarChar(200)
+  ownerFullNameTh    String             @db.VarChar(200)
+  ownerFullNameEn    String             @db.VarChar(200)
+  apartmentNameTh    String             @db.VarChar(200)
+  apartmentNameEn    String             @db.VarChar(200)
+  totalRooms         Int
+  houseNumber        String             @db.VarChar(50)
+  moo                String?            @db.VarChar(50)
+  subdistrict        String             @db.VarChar(100)
+  district           String             @db.VarChar(100)
+  province           String             @db.VarChar(100)
+  postalCode         String             @db.VarChar(10)
+  approvedAdminId    String?            @db.Uuid
+  approvedApartmentId String?           @db.Uuid
+  approvedAt         DateTime?
+  rejectedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email])
+}
+
+model CustomPlanInquiry {
+  id          String        @id @default(uuid()) @db.Uuid
+  fullName    String        @db.VarChar(200)
+  phone       String        @db.VarChar(30)
+  email       String        @db.VarChar(200)
+  lineId      String?       @db.VarChar(100)
+  message     String        @db.VarChar(3000)
+  status      InquiryStatus @default(NEW)
+  contactedAt DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email])
+}
+
 model Room {
   id            String    @id @default(uuid()) @db.Uuid
   apartmentId   String    @db.Uuid
@@ -119,6 +169,7 @@ model ApartmentBillingItem {
 }
 
 model Bill {
+  paymentSubmissions PaymentSubmission[]
   id            String      @id @default(uuid()) @db.Uuid
   apartmentId   String      @db.Uuid
   apartment     Apartment   @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
@@ -137,7 +188,9 @@ model Bill {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  @@unique([tenantId, billingPeriod])
+  // A tenant may receive multiple bills in the same month (for example an
+  // outstanding bill plus an additional charge or a corrected replacement).
+  @@index([tenantId, billingPeriod])
   @@index([apartmentId, billingPeriod])
   @@index([apartmentId, status])
 }
@@ -286,4 +339,55 @@ enum LineNotificationStatus {
   PENDING
   SENT
   FAILED
+}
+
+enum RegistrationPlan {
+  FREE_30_DAYS
+  TRIAL_3_MONTHS
+  FULL_1_YEAR
+}
+
+enum RegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  CLOSED
+}
+
+model PaymentSubmission {
+  id String @id @default(uuid()) @db.Uuid
+  billId String @db.Uuid
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Restrict)
+  apartmentId String @db.Uuid
+  tenantId String @db.Uuid
+  roomId String? @db.Uuid
+  roomNumber String @db.VarChar(20)
+  tenantName String @db.VarChar(200)
+  uploadKey String @unique
+  objectKey String? @unique
+  mimeType String
+  sizeBytes Int
+  transferredAt DateTime
+  status PaymentSubmissionStatus @default(UPLOADING)
+  createdAt DateTime @default(now())
+  submittedAt DateTime?
+  reviewedAt DateTime?
+  reviewedById String? @db.Uuid
+  rejectionNote String? @db.VarChar(500)
+
+  @@index([apartmentId, roomNumber, createdAt])
+  @@index([apartmentId, roomId, createdAt])
+  @@index([tenantId, createdAt])
+}
+
+enum PaymentSubmissionStatus {
+  UPLOADING
+  PENDING
+  APPROVED
+  REJECTED
 }
