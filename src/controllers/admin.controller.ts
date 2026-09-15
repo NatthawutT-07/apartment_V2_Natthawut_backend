@@ -9,6 +9,7 @@ import {
   createBillSchema,
   createTenantSchema,
   tenantParamsSchema,
+  updateBillSchema,
 } from "../validation/admin.validation.js";
 import { lineBillParamsSchema, lineTenantParamsSchema } from "../validation/line.validation.js";
 import * as lineService from "../services/line.service.js";
@@ -37,6 +38,12 @@ export const deleteBillingItem: RequestHandler = async (request, response, next)
     const { itemId } = billingItemParamsSchema.parse(request.params);
     await adminService.deleteBillingItem(apartmentId(request), itemId);
     response.status(204).end();
+  } catch (error) { next(error); }
+};
+export const updateBill: RequestHandler = async (request, response, next) => {
+  try {
+    const { billId } = billParamsSchema.parse(request.params);
+    response.json({ bill: await adminService.updateBill(apartmentId(request), billId, updateBillSchema.parse(request.body)) });
   } catch (error) { next(error); }
 };
 export const tenants: RequestHandler = async (request, response, next) => {

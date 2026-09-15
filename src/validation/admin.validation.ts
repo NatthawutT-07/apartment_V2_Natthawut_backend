@@ -67,8 +67,10 @@ export const createTenantSchema = z.object({
 export const createBillSchema = billInputSchema.extend({
   tenantId: z.uuid(),
 }).strict();
+export const updateBillSchema = billInputSchema.omit({ status: true }).strict();
 
 export type BillingItemInput = z.infer<typeof billingItemSchema>;
 export type CreateTenantInput = z.infer<typeof createTenantSchema>;
 export type CreateBillInput = z.infer<typeof createBillSchema>;
+export type UpdateBillInput = z.infer<typeof updateBillSchema>;
 export type ContactInput = z.infer<typeof contactSchema>;

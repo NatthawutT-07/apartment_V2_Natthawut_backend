@@ -926,6 +926,44 @@ describe("apartment-admin operations API", () => {
     }));
   });
 
+  it("updates an unpaid bill and queues the revised LINE notification", async () => {
+    const billId = "70000000-0000-4000-8000-000000000000";
+    prismaMock.bill.findFirst.mockResolvedValue({ id: billId, tenantId, status: "SENT" });
+    prismaMock.bill.update.mockResolvedValue({
+      id: billId,
+      tenantId,
+      billingPeriod: new Date("2026-09-01T00:00:00.000Z"),
+      dueDate: new Date("2026-10-08T00:00:00.000Z"),
+      totalAmount: 1750,
+      status: "SENT",
+    });
+    prismaMock.lineNotification.upsert.mockResolvedValue({ id: "notification-id" });
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
+    );
+
+    const response = await request(app)
+      .patch(`/api/admin/bills/${billId}`)
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({
+        billingMonth: "2026-09",
+        dueDate: "2026-10-08",
+        items: [{ name: "ค่าเช่า", kind: "RENT", calculationType: "FIXED", quantity: 1, unitPrice: 1750 }],
+      });
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.bill.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: billId, apartmentId, status: "SENT" },
+      data: expect.objectContaining({
+        totalAmount: 1750,
+        items: { deleteMany: {}, create: [expect.objectContaining({ amount: 1750 })] },
+      }),
+    }));
+    expect(prismaMock.lineNotification.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { billId_eventType: { billId, eventType: "BILL_CREATED" } },
+    }));
+  });
+
   it("rejects tenant and billing identifiers from another apartment", async () => {
     prismaMock.tenantUser.findFirst.mockResolvedValue(null);
 

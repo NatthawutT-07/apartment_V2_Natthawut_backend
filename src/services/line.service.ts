@@ -273,6 +273,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
     if (!account?.isActive || account.blockedAt) throw new Error("Tenant has no active LINE connection");
     const amount = Number(notification.bill.totalAmount).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const isPaid = eventType === LineNotificationType.BILL_PAID;
+    const dueDate = notification.bill.dueDate?.toLocaleDateString("th-TH", { dateStyle: "medium", timeZone: "UTC" });
     const itemLines = notification.bill.items.slice(0, 8).map((item) => ({
       type: "box",
       layout: "horizontal",
@@ -296,6 +297,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
             ...(notification.bill.items.length > 8 ? [{ type: "text", text: `และอีก ${notification.bill.items.length - 8} รายการ`, size: "xs", color: "#6B756F" }] : []),
             { type: "separator" },
             { type: "text", text: `฿${amount}`, size: "xxl", weight: "bold", color: "#14231D" },
+            ...(!isPaid && dueDate ? [{ type: "text", text: `กำหนดชำระ ${dueDate}`, size: "sm", weight: "bold", color: "#B45309" }] : []),
             { type: "text", text: isPaid ? "ระบบบันทึกการชำระเงินแล้ว" : "กรุณาตรวจสอบรายละเอียดและวันครบกำหนด", size: "sm", wrap: true, color: "#6B756F" },
           ] },
           footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#236D58", action: { type: "uri", label: isPaid ? "ดูประวัติการชำระ" : "ดูบิลและชำระเงิน", uri: `${cleanBaseUrl(config.frontendBaseUrl)}${isPaid ? "/tenant/payments" : "/tenant/dashboard"}` } }] },

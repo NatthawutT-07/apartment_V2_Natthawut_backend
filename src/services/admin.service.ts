@@ -13,6 +13,7 @@ import type {
   CreateBillInput,
   CreateTenantInput,
   ContactInput,
+  UpdateBillInput,
 } from "../validation/admin.validation.js";
 import { queueBillLineNotification, sendBillLineNotification } from "./line.service.js";
 
@@ -455,6 +456,10 @@ export async function listBills(apartmentId: string) {
       issuedAt: true,
       dueDate: true,
       paidAt: true,
+      items: {
+        orderBy: { sortOrder: "asc" },
+        select: { name: true, kind: true, calculationType: true, quantity: true, unitPrice: true, amount: true },
+      },
       lineNotifications: {
         orderBy: { createdAt: "desc" },
         take: 2,
@@ -462,7 +467,43 @@ export async function listBills(apartmentId: string) {
       },
     },
   });
-  return bills.map((bill) => ({ ...bill, totalAmount: money(bill.totalAmount) }));
+  return bills.map((bill) => ({
+    ...bill,
+    totalAmount: money(bill.totalAmount),
+    items: bill.items.map((item) => ({ ...item, quantity: money(item.quantity), unitPrice: money(item.unitPrice), amount: money(item.amount) })),
+  }));
+}
+
+export async function updateBill(apartmentId: string, billId: string, input: UpdateBillInput) {
+  const existing = await prisma.bill.findFirst({
+    where: { id: billId, apartmentId },
+    select: { id: true, tenantId: true, status: true },
+  });
+  if (!existing) throw new AppError(404, "Bill not found");
+  if (existing.status !== BillStatus.SENT) throw new AppError(409, "Only an unpaid bill can be edited");
+
+  const items = input.items.map((item, index) => ({
+    ...item,
+    sortOrder: index,
+    amount: Math.round(item.quantity * item.unitPrice * 100) / 100,
+  }));
+  const totalAmount = Math.round(items.reduce((total, item) => total + item.amount, 0) * 100) / 100;
+  const updated = await prisma.$transaction(async (transaction) => {
+    const bill = await transaction.bill.update({
+      where: { id: billId, apartmentId, status: BillStatus.SENT },
+      data: {
+        billingPeriod: billingPeriod(input.billingMonth),
+        dueDate: input.dueDate ? dateAtStart(input.dueDate) : null,
+        totalAmount,
+        items: { deleteMany: {}, create: items },
+      },
+      select: { id: true, tenantId: true, billingPeriod: true, dueDate: true, totalAmount: true, status: true },
+    });
+    if (bill.tenantId) await queueBillLineNotification(transaction, bill.id, bill.tenantId, LineNotificationType.BILL_CREATED);
+    return bill;
+  });
+  if (updated.tenantId) await sendBillLineNotification(updated.id, LineNotificationType.BILL_CREATED);
+  return { ...updated, totalAmount: money(updated.totalAmount) };
 }
 
 export async function markBillPaid(apartmentId: string, billId: string) {

@@ -18,6 +18,7 @@ adminRouter.delete("/tenants/:tenantId", adminController.deleteTenant);
 adminRouter.get("/tenants/:tenantId/bill-template", adminController.billTemplate);
 adminRouter.post("/bills", adminController.createBill);
 adminRouter.get("/bills", adminController.bills);
+adminRouter.patch("/bills/:billId", adminController.updateBill);
 adminRouter.patch("/bills/:billId/paid", adminController.markBillPaid);
 adminRouter.patch("/bills/:billId/void", adminController.voidBill);
 adminRouter.get("/contacts", adminController.contacts);
