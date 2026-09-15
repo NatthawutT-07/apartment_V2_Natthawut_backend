@@ -330,6 +330,7 @@ enum ContactChannel {
 
 enum LineNotificationType {
   BILL_CREATED
+  BILL_OVERDUE
   BILL_PAID
 }
 

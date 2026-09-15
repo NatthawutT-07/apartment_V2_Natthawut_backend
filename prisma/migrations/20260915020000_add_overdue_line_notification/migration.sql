@@ -1,0 +1,1 @@
+ALTER TYPE "LineNotificationType" ADD VALUE 'BILL_OVERDUE';

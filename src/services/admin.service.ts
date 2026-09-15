@@ -499,10 +499,10 @@ export async function updateBill(apartmentId: string, billId: string, input: Upd
       },
       select: { id: true, tenantId: true, billingPeriod: true, dueDate: true, totalAmount: true, status: true },
     });
-    if (bill.tenantId) await queueBillLineNotification(transaction, bill.id, bill.tenantId, LineNotificationType.BILL_CREATED);
+    if (bill.tenantId) await queueBillLineNotification(transaction, bill.id, bill.tenantId, LineNotificationType.BILL_OVERDUE);
     return bill;
   });
-  if (updated.tenantId) await sendBillLineNotification(updated.id, LineNotificationType.BILL_CREATED);
+  if (updated.tenantId) await sendBillLineNotification(updated.id, LineNotificationType.BILL_OVERDUE);
   return { ...updated, totalAmount: money(updated.totalAmount) };
 }
 

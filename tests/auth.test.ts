@@ -960,7 +960,7 @@ describe("apartment-admin operations API", () => {
       }),
     }));
     expect(prismaMock.lineNotification.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { billId_eventType: { billId, eventType: "BILL_CREATED" } },
+      where: { billId_eventType: { billId, eventType: "BILL_OVERDUE" } },
     }));
   });
 

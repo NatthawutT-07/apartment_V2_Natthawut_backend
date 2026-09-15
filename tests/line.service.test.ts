@@ -9,11 +9,12 @@ const prismaMock = vi.hoisted(() => ({
     updateMany: vi.fn(),
   },
   tenantLineAccount: { upsert: vi.fn(), updateMany: vi.fn() },
+  lineNotification: { findUnique: vi.fn(), update: vi.fn() },
 }));
 
 vi.mock("../src/lib/prisma.js", () => ({ prisma: prismaMock }));
 
-import { completeLineConnect, createTenantLineInvite, disconnectTenantLine } from "../src/services/line.service.js";
+import { completeLineConnect, createTenantLineInvite, disconnectTenantLine, sendBillLineNotification } from "../src/services/line.service.js";
 
 const tenantId = "50000000-0000-4000-8000-000000000000";
 const apartmentId = "20000000-0000-4000-8000-000000000000";
@@ -119,5 +120,37 @@ describe("LINE tenant linking", () => {
 
     await expect(disconnectTenantLine(apartmentId, tenantId)).rejects.toMatchObject({ statusCode: 404 });
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("uses black, red, and green LINE cards for new, overdue, and paid bills", async () => {
+    prismaMock.lineNotification.findUnique.mockResolvedValue({
+      id: "notification-id",
+      attemptCount: 0,
+      bill: {
+        id: "bill-id", apartmentId, tenantId, tenantName: "Tenant One", roomNumber: "101",
+        billingPeriod: new Date("2026-09-01T00:00:00.000Z"), totalAmount: 250,
+        dueDate: new Date("2026-10-05T00:00:00.000Z"), status: "SENT",
+        apartment: { name: "ABC Apartment" },
+        items: [{ name: "ค่าปรับล่าช้า", quantity: 5, unitPrice: 50, amount: 250 }],
+        tenant: { lineAccount: { lineUserId: "U-line-user", isActive: true, blockedAt: null } },
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    await sendBillLineNotification("bill-id", "BILL_CREATED");
+    expect(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).toContain('"backgroundColor":"#111827"');
+    vi.mocked(fetch).mockClear();
+
+    await sendBillLineNotification("bill-id", "BILL_OVERDUE");
+
+    const request = vi.mocked(fetch).mock.calls[0]?.[1];
+    expect(String(request?.body)).toContain('"backgroundColor":"#B91C1C"');
+    expect(String(request?.body)).toContain("แจ้งเตือนบิลเกินกำหนด");
+    expect(String(request?.body)).toContain("ค่าปรับล่าช้า × 5");
+    expect(String(request?.body)).toContain("฿250.00");
+
+    vi.mocked(fetch).mockClear();
+    await sendBillLineNotification("bill-id", "BILL_PAID");
+    expect(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).toContain('"backgroundColor":"#1F7A5B"');
   });
 });

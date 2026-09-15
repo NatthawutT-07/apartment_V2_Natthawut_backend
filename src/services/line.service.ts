@@ -273,6 +273,9 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
     if (!account?.isActive || account.blockedAt) throw new Error("Tenant has no active LINE connection");
     const amount = Number(notification.bill.totalAmount).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const isPaid = eventType === LineNotificationType.BILL_PAID;
+    const isOverdue = eventType === LineNotificationType.BILL_OVERDUE;
+    const headerColor = isPaid ? "#1F7A5B" : isOverdue ? "#B91C1C" : "#111827";
+    const title = isPaid ? "ชำระเงินเรียบร้อย" : isOverdue ? "แจ้งเตือนบิลเกินกำหนด" : "แจ้งบิลประจำเดือน";
     const dueDate = notification.bill.dueDate?.toLocaleDateString("th-TH", { dateStyle: "medium", timeZone: "UTC" });
     const itemLines = notification.bill.items.slice(0, 8).map((item) => ({
       type: "box",
@@ -286,10 +289,10 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
       to: account.lineUserId,
       messages: [{
         type: "flex",
-        altText: isPaid ? `ยืนยันรับชำระเงินห้อง ${notification.bill.roomNumber}` : `บิลใหม่ห้อง ${notification.bill.roomNumber} ฿${amount}`,
+        altText: isPaid ? `ยืนยันรับชำระเงินห้อง ${notification.bill.roomNumber}` : isOverdue ? `แจ้งเตือนบิลเกินกำหนดห้อง ${notification.bill.roomNumber} ฿${amount}` : `บิลใหม่ห้อง ${notification.bill.roomNumber} ฿${amount}`,
         contents: {
           type: "bubble",
-          header: { type: "box", layout: "vertical", backgroundColor: isPaid ? "#1F7A5B" : "#174C3C", contents: [{ type: "text", text: isPaid ? "ชำระเงินเรียบร้อย" : "แจ้งบิลประจำเดือน", color: "#FFFFFF", weight: "bold", size: "lg" }] },
+          header: { type: "box", layout: "vertical", backgroundColor: headerColor, contents: [{ type: "text", text: title, color: "#FFFFFF", weight: "bold", size: "lg" }] },
           body: { type: "box", layout: "vertical", spacing: "md", contents: [
             { type: "text", text: notification.bill.apartment.name, weight: "bold", size: "md", color: "#14231D", wrap: true },
             { type: "text", text: `ห้อง ${notification.bill.roomNumber} · ${notification.bill.tenantName}`, size: "sm", color: "#6B756F", wrap: true },
@@ -298,7 +301,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
             { type: "separator" },
             { type: "text", text: `฿${amount}`, size: "xxl", weight: "bold", color: "#14231D" },
             ...(!isPaid && dueDate ? [{ type: "text", text: `กำหนดชำระ ${dueDate}`, size: "sm", weight: "bold", color: "#B45309" }] : []),
-            { type: "text", text: isPaid ? "ระบบบันทึกการชำระเงินแล้ว" : "กรุณาตรวจสอบรายละเอียดและวันครบกำหนด", size: "sm", wrap: true, color: "#6B756F" },
+            { type: "text", text: isPaid ? "ระบบบันทึกการชำระเงินแล้ว" : isOverdue ? "ยอดนี้รวมรายการหรือค่าปรับที่ผู้ดูแลแก้ไขล่าสุดแล้ว" : "กรุณาตรวจสอบรายละเอียดและวันครบกำหนด", size: "sm", wrap: true, color: "#6B756F" },
           ] },
           footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#236D58", action: { type: "uri", label: isPaid ? "ดูประวัติการชำระ" : "ดูบิลและชำระเงิน", uri: `${cleanBaseUrl(config.frontendBaseUrl)}${isPaid ? "/tenant/payments" : "/tenant/dashboard"}` } }] },
         },
@@ -313,10 +316,14 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
 }
 
 export async function retryBillLineNotification(apartmentId: string, billId: string) {
-  const bill = await prisma.bill.findFirst({ where: { id: billId, apartmentId }, select: { id: true, tenantId: true, status: true } });
+  const bill = await prisma.bill.findFirst({ where: { id: billId, apartmentId }, select: { id: true, tenantId: true, status: true, dueDate: true } });
   if (!bill?.tenantId) throw new AppError(404, "Bill or active tenant not found");
   if (bill.status === BillStatus.VOID) throw new AppError(409, "A cancelled bill cannot be sent");
-  const eventType = bill.status === BillStatus.PAID ? LineNotificationType.BILL_PAID : LineNotificationType.BILL_CREATED;
+  const eventType = bill.status === BillStatus.PAID
+    ? LineNotificationType.BILL_PAID
+    : bill.dueDate && bill.dueDate < new Date()
+      ? LineNotificationType.BILL_OVERDUE
+      : LineNotificationType.BILL_CREATED;
   await prisma.lineNotification.upsert({ where: { billId_eventType: { billId, eventType } }, create: { billId, tenantId: bill.tenantId, eventType }, update: { status: LineNotificationStatus.PENDING, lastError: null } });
   await sendBillLineNotification(billId, eventType);
 }
