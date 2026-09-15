@@ -211,13 +211,12 @@ describe("separated authentication API", () => {
     expect(response.body).toEqual({ message: "Invalid username or password" });
   });
 
-  it("requires an apartment code and scopes a tenant lookup to that apartment", async () => {
-    prismaMock.apartment.findFirst.mockResolvedValue({ id: apartmentId });
+  it("logs a tenant in with a globally unique username and password", async () => {
     prismaMock.tenantUser.findUnique.mockResolvedValue(tenant);
 
     const response = await request(app)
       .post("/api/auth/tenant/login")
-      .send({ apartmentCode: "ABC", username: "room501", password });
+      .send({ username: "room501", password });
 
     expect(response.status).toBe(200);
     expect(response.body.user).toMatchObject({
@@ -225,18 +224,9 @@ describe("separated authentication API", () => {
       role: Role.TENANT,
       apartmentId,
     });
-    expect(prismaMock.apartment.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          OR: [{ slug: "abc" }, { subdomain: "abc" }],
-        }),
-      }),
-    );
     expect(prismaMock.tenantUser.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          apartmentId_username: { apartmentId, username: "room501" },
-        },
+        where: { username: "room501" },
       }),
     );
     expect(prismaMock.adminUser.findUnique).not.toHaveBeenCalled();
@@ -267,7 +257,6 @@ describe("separated authentication API", () => {
   });
 
   it("rejects a tenant from an inactive apartment", async () => {
-    prismaMock.apartment.findFirst.mockResolvedValue({ id: apartmentId });
     prismaMock.tenantUser.findUnique.mockResolvedValue({
       ...tenant,
       apartment: { ...tenant.apartment, isActive: false },
@@ -275,7 +264,7 @@ describe("separated authentication API", () => {
 
     const response = await request(app)
       .post("/api/auth/tenant/login")
-      .send({ apartmentCode: "abc", username: "room501", password });
+      .send({ username: "room501", password });
 
     expect(response.status).toBe(401);
   });
@@ -371,7 +360,7 @@ describe("separated authentication API", () => {
       .send({ username: "owner_abc", password, apartmentCode: "abc" });
     const tenantResponse = await request(app)
       .post("/api/auth/tenant/login")
-      .send({ username: "room501", password });
+      .send({ username: "room501", password, apartmentCode: "abc" });
 
     expect(adminResponse.status).toBe(400);
     expect(tenantResponse.status).toBe(400);
@@ -845,6 +834,42 @@ describe("apartment-admin operations API", () => {
     expect(prismaMock.apartment.findUnique).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: apartmentId },
     }));
+  });
+
+  it("rejects a tenant username that already belongs to another apartment", async () => {
+    const roomId = "60000000-0000-4000-8000-000000000001";
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
+    );
+    prismaMock.room.findFirst.mockResolvedValue({ id: roomId, roomNumber: "101" });
+    prismaMock.tenantUser.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "tenant-in-another-apartment" });
+    prismaMock.tenantUser.findFirst.mockResolvedValue(null);
+
+    const response = await request(app)
+      .post("/api/admin/tenants")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({
+        roomId,
+        roomNumber: "101",
+        floor: "1",
+        fullName: "Tenant One",
+        idCard: "1234567890123",
+        phone: "0800000000",
+        username: "global-user",
+        password,
+        moveInDate: "2026-09-01",
+        moveOutDate: "",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ message: "Tenant username is already in use" });
+    expect(prismaMock.tenantUser.findUnique).toHaveBeenNthCalledWith(2, {
+      where: { username: "global-user" },
+      select: { id: true },
+    });
+    expect(prismaMock.tenantUser.create).not.toHaveBeenCalled();
   });
 
   it("creates a sent bill with server-calculated line items and total", async () => {

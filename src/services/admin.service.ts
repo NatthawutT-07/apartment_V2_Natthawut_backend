@@ -295,7 +295,7 @@ export async function createTenant(apartmentId: string, input: CreateTenantInput
           select: { id: true },
         }),
         transaction.tenantUser.findUnique({
-          where: { apartmentId_username: { apartmentId, username: input.username } },
+          where: { username: input.username },
           select: { id: true },
         }),
         transaction.tenantUser.findFirst({

@@ -19,9 +19,7 @@ export const loginAdmin: RequestHandler = async (request, response, next) => {
 export const loginTenant: RequestHandler = async (request, response, next) => {
   try {
     const input = tenantLoginSchema.parse(request.body);
-    response.json(
-      await authService.loginTenant(input.apartmentCode, input.username, input.password),
-    );
+    response.json(await authService.loginTenant(input.username, input.password));
   } catch (error) {
     next(error);
   }

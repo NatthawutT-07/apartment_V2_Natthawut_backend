@@ -197,12 +197,7 @@ async function main() {
       await prisma.$transaction(
         batch.map((tenant) =>
           prisma.tenantUser.upsert({
-            where: {
-              apartmentId_username: {
-                apartmentId: apartment.id,
-                username: tenant.username,
-              },
-            },
+            where: { username: `${apartment.slug}-${tenant.username}` },
             update: {
               fullName: tenant.fullName,
               roomNumber: tenant.roomNumber,
@@ -212,9 +207,11 @@ async function main() {
               passwordHash: tenantHash,
               isActive: true,
               mustChangePassword,
+              username: `${apartment.slug}-${tenant.username}`,
             },
             create: {
               ...tenant,
+              username: `${apartment.slug}-${tenant.username}`,
               apartmentId: apartment.id,
               passwordHash: tenantHash,
               mustChangePassword,

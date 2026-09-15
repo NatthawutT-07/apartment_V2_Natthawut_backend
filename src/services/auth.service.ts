@@ -173,26 +173,13 @@ export async function loginAdmin(username: string, password: string) {
 }
 
 export async function loginTenant(
-  apartmentCode: string,
   username: string,
   password: string,
 ) {
-  const apartment = await prisma.apartment.findFirst({
-    where: {
-      isActive: true,
-      OR: [{ slug: apartmentCode }, { subdomain: apartmentCode }],
-    },
-    select: { id: true },
+  const tenant = await prisma.tenantUser.findUnique({
+    where: { username },
+    select: { ...tenantSelect, passwordHash: true },
   });
-
-  const tenant = apartment
-    ? await prisma.tenantUser.findUnique({
-        where: {
-          apartmentId_username: { apartmentId: apartment.id, username },
-        },
-        select: { ...tenantSelect, passwordHash: true },
-      })
-    : null;
   const matches = await passwordMatches(password, tenant?.passwordHash);
 
   if (!tenant?.isActive || !tenant.apartment.isActive || !matches) {
