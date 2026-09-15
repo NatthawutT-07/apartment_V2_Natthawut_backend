@@ -8,12 +8,12 @@ const prismaMock = vi.hoisted(() => ({
     create: vi.fn(),
     updateMany: vi.fn(),
   },
-  tenantLineAccount: { upsert: vi.fn() },
+  tenantLineAccount: { upsert: vi.fn(), updateMany: vi.fn() },
 }));
 
 vi.mock("../src/lib/prisma.js", () => ({ prisma: prismaMock }));
 
-import { completeLineConnect, createTenantLineInvite } from "../src/services/line.service.js";
+import { completeLineConnect, createTenantLineInvite, disconnectTenantLine } from "../src/services/line.service.js";
 
 const tenantId = "50000000-0000-4000-8000-000000000000";
 const apartmentId = "20000000-0000-4000-8000-000000000000";
@@ -92,5 +92,32 @@ describe("LINE tenant linking", () => {
       "https://api.line.me/v2/bot/message/push",
       expect.objectContaining({ body: expect.stringContaining("ABC Apartment") }),
     );
+  });
+
+  it("disconnects only a tenant in the admin apartment and invalidates pending invitations", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue({ id: tenantId });
+    prismaMock.tenantLineAccount.updateMany.mockResolvedValue({ count: 1 });
+
+    await disconnectTenantLine(apartmentId, tenantId);
+
+    expect(prismaMock.tenantUser.findFirst).toHaveBeenCalledWith({
+      where: { id: tenantId, apartmentId },
+      select: { id: true },
+    });
+    expect(prismaMock.tenantLineAccount.updateMany).toHaveBeenCalledWith({
+      where: { tenantId, isActive: true },
+      data: { isActive: false, unlinkedAt: expect.any(Date) },
+    });
+    expect(prismaMock.lineLinkInvite.updateMany).toHaveBeenCalledWith({
+      where: { tenantId, usedAt: null },
+      data: { usedAt: expect.any(Date) },
+    });
+  });
+
+  it("does not disconnect a tenant from another apartment", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue(null);
+
+    await expect(disconnectTenantLine(apartmentId, tenantId)).rejects.toMatchObject({ statusCode: 404 });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });
