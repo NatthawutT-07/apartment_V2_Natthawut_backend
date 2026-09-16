@@ -127,19 +127,32 @@ export async function listBillingItems(apartmentId: string) {
 
 export async function createBillingItem(apartmentId: string, input: BillingItemInput) {
   try {
-    const item = await prisma.apartmentBillingItem.create({
-      data: { ...input, apartmentId, sortOrder: input.sortOrder ?? 100 },
-      select: {
-        id: true,
-        name: true,
-        kind: true,
-        calculationType: true,
-        unitPrice: true,
-        sortOrder: true,
-      },
+    const existing = await prisma.apartmentBillingItem.findFirst({
+      where: { apartmentId, name: input.name },
+      select: { id: true, isActive: true },
     });
+    if (existing?.isActive) throw new AppError(409, "A billing item with this name already exists");
+    const select = {
+      id: true,
+      name: true,
+      kind: true,
+      calculationType: true,
+      unitPrice: true,
+      sortOrder: true,
+    } as const;
+    const item = existing
+      ? await prisma.apartmentBillingItem.update({
+          where: { id: existing.id },
+          data: { ...input, isActive: true, sortOrder: input.sortOrder ?? 100 },
+          select,
+        })
+      : await prisma.apartmentBillingItem.create({
+          data: { ...input, apartmentId, sortOrder: input.sortOrder ?? 100 },
+          select,
+        });
     return publicBillingItem(item);
   } catch (error) {
+    if (error instanceof AppError) throw error;
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       throw new AppError(409, "A billing item with this name already exists");
     }
@@ -459,41 +472,18 @@ export async function getBillTemplate(apartmentId: string, tenantId: string) {
   });
   if (!tenant) throw new AppError(404, "Tenant not found");
 
-  const previous = await prisma.bill.findFirst({
-    where: { apartmentId, tenantId },
-    orderBy: { billingPeriod: "desc" },
-    select: {
-      billingPeriod: true,
-      items: {
-        orderBy: { sortOrder: "asc" },
-        select: {
-          name: true,
-          kind: true,
-          calculationType: true,
-          quantity: true,
-          unitPrice: true,
-        },
-      },
-    },
-  });
-  const items = previous
-    ? previous.items.map((item) => ({
-        ...item,
-        quantity: money(item.quantity),
-        unitPrice: money(item.unitPrice),
-      }))
-    : (await listBillingItems(apartmentId)).map((item) => ({
-        name: item.name,
-        kind: item.kind,
-        calculationType: item.calculationType,
-        quantity: item.calculationType === "FIXED" ? 1 : 0,
-        unitPrice: item.unitPrice,
-      }));
+  const items = (await listBillingItems(apartmentId)).map((item) => ({
+    name: item.name,
+    kind: item.kind,
+    calculationType: item.calculationType,
+    quantity: item.calculationType === "FIXED" ? 1 : 0,
+    unitPrice: item.unitPrice,
+  }));
 
   return {
     tenant,
-    source: previous ? "PREVIOUS_BILL" as const : "APARTMENT_DEFAULTS" as const,
-    previousBillingPeriod: previous?.billingPeriod ?? null,
+    source: "APARTMENT_DEFAULTS" as const,
+    previousBillingPeriod: null,
     items,
   };
 }

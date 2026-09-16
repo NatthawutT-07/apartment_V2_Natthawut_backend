@@ -869,6 +869,57 @@ describe("apartment-admin operations API", () => {
     }));
   });
 
+  it("restores a deleted billing default only within the admin apartment", async () => {
+    const itemId = "90000000-0000-4000-8000-000000000000";
+    prismaMock.apartmentBillingItem.findFirst.mockResolvedValue({ id: itemId, isActive: false });
+    prismaMock.apartmentBillingItem.update.mockResolvedValue({
+      id: itemId,
+      name: "ค่าที่จอดรถ",
+      kind: "OTHER",
+      calculationType: "FIXED",
+      unitPrice: 500,
+      sortOrder: 100,
+    });
+
+    const response = await request(app)
+      .post("/api/admin/billing-items")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({ name: "ค่าที่จอดรถ", kind: "OTHER", calculationType: "FIXED", unitPrice: 500 });
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.apartmentBillingItem.findFirst).toHaveBeenCalledWith({
+      where: { apartmentId, name: "ค่าที่จอดรถ" },
+      select: { id: true, isActive: true },
+    });
+    expect(prismaMock.apartmentBillingItem.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: itemId },
+      data: expect.objectContaining({ isActive: true }),
+    }));
+    expect(prismaMock.apartmentBillingItem.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a billing default scoped to the admin apartment", async () => {
+    prismaMock.apartmentBillingItem.findFirst.mockResolvedValue(null);
+    prismaMock.apartmentBillingItem.create.mockResolvedValue({
+      id: "90000000-0000-4000-8000-000000000001",
+      name: "ค่าส่วนกลาง",
+      kind: "OTHER",
+      calculationType: "FIXED",
+      unitPrice: 300,
+      sortOrder: 100,
+    });
+
+    const response = await request(app)
+      .post("/api/admin/billing-items")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({ name: "ค่าส่วนกลาง", kind: "OTHER", calculationType: "FIXED", unitPrice: 300 });
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.apartmentBillingItem.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ apartmentId, name: "ค่าส่วนกลาง" }),
+    }));
+  });
+
   it("rejects a tenant username that already belongs to another apartment", async () => {
     const roomId = "60000000-0000-4000-8000-000000000001";
     prismaMock.$transaction.mockImplementation(
@@ -1009,6 +1060,33 @@ describe("apartment-admin operations API", () => {
     expect(prismaMock.tenantUser.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ apartmentId, id: tenantId }),
     }));
+  });
+
+  it("loads each apartment's active billing defaults for every new bill", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue({ id: tenantId, fullName: "Tenant One", roomNumber: "101" });
+    prismaMock.apartmentBillingItem.findMany.mockResolvedValue([{
+      id: "90000000-0000-4000-8000-000000000001",
+      name: "ค่าเช่าห้อง",
+      kind: "RENT",
+      calculationType: "FIXED",
+      unitPrice: 2500,
+      sortOrder: 1,
+    }]);
+
+    const response = await request(app)
+      .get(`/api/admin/tenants/${tenantId}/bill-template`)
+      .set("Authorization", `Bearer ${adminToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      source: "APARTMENT_DEFAULTS",
+      previousBillingPeriod: null,
+      items: [{ name: "ค่าเช่าห้อง", quantity: 1, unitPrice: 2500 }],
+    });
+    expect(prismaMock.apartmentBillingItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { apartmentId, isActive: true },
+    }));
+    expect(prismaMock.bill.findFirst).not.toHaveBeenCalled();
   });
 });
 
