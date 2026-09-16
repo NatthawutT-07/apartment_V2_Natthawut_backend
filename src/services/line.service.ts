@@ -263,7 +263,7 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
     select: {
       id: true,
       attemptCount: true,
-      bill: { select: { id: true, apartmentId: true, tenantId: true, tenantName: true, roomNumber: true, billingPeriod: true, totalAmount: true, dueDate: true, status: true, apartment: { select: { name: true } }, items: { orderBy: { sortOrder: "asc" }, select: { name: true, quantity: true, unitPrice: true, amount: true } }, tenant: { select: { lineAccount: { select: { lineUserId: true, isActive: true, blockedAt: true } } } } } },
+      bill: { select: { id: true, apartmentId: true, tenantId: true, tenantName: true, roomNumber: true, billingPeriod: true, totalAmount: true, dueDate: true, status: true, apartment: { select: { name: true, bankAccounts: { where: { isActive: true }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1, select: { bankName: true, accountType: true, accountName: true, accountNumber: true } } } }, items: { orderBy: { sortOrder: "asc" }, select: { name: true, quantity: true, unitPrice: true, amount: true } }, tenant: { select: { lineAccount: { select: { lineUserId: true, isActive: true, blockedAt: true } } } } } },
     },
   });
   if (!notification) return;
@@ -277,6 +277,8 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
     const headerColor = isPaid ? "#1F7A5B" : isOverdue ? "#B91C1C" : "#111827";
     const title = isPaid ? "ชำระเงินเรียบร้อย" : isOverdue ? "แจ้งเตือนบิลเกินกำหนด" : "แจ้งบิลประจำเดือน";
     const dueDate = notification.bill.dueDate?.toLocaleDateString("th-TH", { dateStyle: "medium", timeZone: "UTC" });
+    const bankAccount = notification.bill.apartment.bankAccounts?.[0];
+    const accountTypeLabel = bankAccount?.accountType === "SAVINGS" ? "ออมทรัพย์" : bankAccount?.accountType === "CURRENT" ? "กระแสรายวัน" : "พร้อมเพย์";
     const itemLines = notification.bill.items.slice(0, 8).map((item) => ({
       type: "box",
       layout: "horizontal",
@@ -301,6 +303,12 @@ export async function sendBillLineNotification(billId: string, eventType: LineNo
             { type: "separator" },
             { type: "text", text: `฿${amount}`, size: "xxl", weight: "bold", color: "#14231D" },
             ...(!isPaid && dueDate ? [{ type: "text", text: `กำหนดชำระ ${dueDate}`, size: "sm", weight: "bold", color: "#B45309" }] : []),
+            ...(!isPaid && bankAccount ? [
+              { type: "separator" },
+              { type: "text", text: `${bankAccount.bankName} · ${accountTypeLabel}`, size: "sm", weight: "bold", color: "#14231D", wrap: true },
+              { type: "text", text: bankAccount.accountNumber, size: "lg", weight: "bold", color: "#14231D" },
+              { type: "text", text: `ชื่อบัญชี ${bankAccount.accountName}`, size: "sm", color: "#6B756F", wrap: true },
+            ] : []),
             { type: "text", text: isPaid ? "ระบบบันทึกการชำระเงินแล้ว" : isOverdue ? "ยอดนี้รวมรายการหรือค่าปรับที่ผู้ดูแลแก้ไขล่าสุดแล้ว" : "กรุณาตรวจสอบรายละเอียดและวันครบกำหนด", size: "sm", wrap: true, color: "#6B756F" },
           ] },
           footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#236D58", action: { type: "uri", label: isPaid ? "ดูประวัติการชำระ" : "ดูบิลและชำระเงิน", uri: `${cleanBaseUrl(config.frontendBaseUrl)}${isPaid ? "/tenant/payments" : "/tenant/dashboard"}` } }] },

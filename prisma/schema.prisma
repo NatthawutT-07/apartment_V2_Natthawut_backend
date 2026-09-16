@@ -18,6 +18,7 @@ model AdminUser {
   mustChangePassword Boolean          @default(true)
   apartments         AdminApartment[]
   contactsCreated    ApartmentContact[]
+  bankAccountsCreated ApartmentBankAccount[]
   lineInvitesCreated LineLinkInvite[]
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
@@ -79,6 +80,7 @@ model Apartment {
   billingItems ApartmentBillingItem[]
   bills      Bill[]
   contacts   ApartmentContact[]
+  bankAccounts ApartmentBankAccount[]
   lineAccounts TenantLineAccount[]
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
@@ -213,6 +215,25 @@ model ApartmentContact {
   @@index([createdByAdminId])
 }
 
+model ApartmentBankAccount {
+  id               String          @id @default(uuid()) @db.Uuid
+  apartmentId      String          @db.Uuid
+  apartment        Apartment       @relation(fields: [apartmentId], references: [id], onDelete: Cascade)
+  createdByAdminId String          @db.Uuid
+  createdByAdmin   AdminUser       @relation(fields: [createdByAdminId], references: [id], onDelete: Restrict)
+  bankCode         String          @db.VarChar(30)
+  bankName         String          @db.VarChar(100)
+  accountType      BankAccountType
+  accountName      String          @db.VarChar(200)
+  accountNumber    String          @db.VarChar(50)
+  isPrimary        Boolean         @default(false)
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([apartmentId, isActive, isPrimary])
+}
+
 model LineOaConfig {
   id                              String   @id @default("central") @db.VarChar(30)
   oaBasicId                       String   @db.VarChar(100)
@@ -326,6 +347,12 @@ enum BillStatus {
 enum ContactChannel {
   PHONE
   LINE
+}
+
+enum BankAccountType {
+  SAVINGS
+  CURRENT
+  PROMPTPAY
 }
 
 enum LineNotificationType {

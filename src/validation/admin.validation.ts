@@ -32,6 +32,16 @@ export const contactSchema = z.object({
   sortOrder: z.coerce.number().int().min(0).max(10_000).optional(),
 }).strict();
 
+export const bankAccountSchema = z.object({
+  bankCode: z.string().trim().min(2).max(30),
+  bankName: z.string().trim().min(2).max(100),
+  accountType: z.enum(["SAVINGS", "CURRENT", "PROMPTPAY"]),
+  accountName: z.string().trim().min(2).max(200),
+  accountNumber: z.string().trim().min(6).max(50).regex(/^[0-9 -]+$/),
+  isPrimary: z.boolean().default(false),
+}).strict();
+export const bankAccountParamsSchema = z.object({ accountId: z.uuid() }).strict();
+
 const billLineSchema = z.object({
   name: z.string().trim().min(1).max(100),
   kind: billingItemKind,
@@ -74,3 +84,4 @@ export type CreateTenantInput = z.infer<typeof createTenantSchema>;
 export type CreateBillInput = z.infer<typeof createBillSchema>;
 export type UpdateBillInput = z.infer<typeof updateBillSchema>;
 export type ContactInput = z.infer<typeof contactSchema>;
+export type BankAccountInput = z.infer<typeof bankAccountSchema>;

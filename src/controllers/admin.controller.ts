@@ -4,6 +4,8 @@ import {
   billingItemParamsSchema,
   billParamsSchema,
   billingItemSchema,
+  bankAccountParamsSchema,
+  bankAccountSchema,
   contactParamsSchema,
   contactSchema,
   createBillSchema,
@@ -37,6 +39,25 @@ export const deleteBillingItem: RequestHandler = async (request, response, next)
   try {
     const { itemId } = billingItemParamsSchema.parse(request.params);
     await adminService.deleteBillingItem(apartmentId(request), itemId);
+    response.status(204).end();
+  } catch (error) { next(error); }
+};
+export const bankAccounts: RequestHandler = async (request, response, next) => {
+  try { response.json({ accounts: await adminService.listBankAccounts(apartmentId(request)) }); } catch (error) { next(error); }
+};
+export const createBankAccount: RequestHandler = async (request, response, next) => {
+  try { response.status(201).json({ account: await adminService.createBankAccount(apartmentId(request), request.user!.userId, bankAccountSchema.parse(request.body)) }); } catch (error) { next(error); }
+};
+export const updateBankAccount: RequestHandler = async (request, response, next) => {
+  try {
+    const { accountId } = bankAccountParamsSchema.parse(request.params);
+    response.json({ account: await adminService.updateBankAccount(apartmentId(request), accountId, bankAccountSchema.parse(request.body)) });
+  } catch (error) { next(error); }
+};
+export const deleteBankAccount: RequestHandler = async (request, response, next) => {
+  try {
+    const { accountId } = bankAccountParamsSchema.parse(request.params);
+    await adminService.deleteBankAccount(apartmentId(request), accountId);
     response.status(204).end();
   } catch (error) { next(error); }
 };

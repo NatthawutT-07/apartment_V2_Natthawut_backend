@@ -28,7 +28,7 @@ export async function getTenantProfile(tenantId: string, apartmentId: string) {
 }
 
 export async function getTenantDashboard(tenantId: string, apartmentId: string) {
-  const [tenant, unpaidBills] = await Promise.all([
+  const [tenant, unpaidBills, paymentAccount] = await Promise.all([
     getTenantProfile(tenantId, apartmentId),
     prisma.bill.findMany({
       where: { tenantId, apartmentId, status: BillStatus.SENT },
@@ -54,6 +54,11 @@ export async function getTenantDashboard(tenantId: string, apartmentId: string) 
         },
       },
     }),
+    prisma.apartmentBankAccount.findFirst({
+      where: { apartmentId, isActive: true },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+      select: { bankCode: true, bankName: true, accountType: true, accountName: true, accountNumber: true },
+    }),
   ]);
   return {
     tenant,
@@ -61,6 +66,7 @@ export async function getTenantDashboard(tenantId: string, apartmentId: string) 
     currentBill: unpaidBills[0] ? publicBill(unpaidBills[0]) : null,
     unpaidBills: unpaidBills.map(publicBill),
     totalUnpaid: unpaidBills.reduce((total, bill) => total + decimal(bill.totalAmount), 0),
+    paymentAccount,
   };
 }
 

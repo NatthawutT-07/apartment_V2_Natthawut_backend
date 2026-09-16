@@ -30,6 +30,14 @@ const prismaMock = vi.hoisted(() => ({
     update: vi.fn(),
     updateMany: vi.fn(),
   },
+  apartmentBankAccount: {
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    count: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  },
   tenantUser: {
     findUnique: vi.fn(),
     findMany: vi.fn(),
@@ -157,6 +165,7 @@ describe("separated authentication API", () => {
       prismaMock.adminApartment,
       prismaMock.room,
       prismaMock.apartmentBillingItem,
+      prismaMock.apartmentBankAccount,
       prismaMock.tenantUser,
       prismaMock.apartment,
     ]) {
@@ -790,6 +799,7 @@ describe("apartment-admin operations API", () => {
       prismaMock.room,
       prismaMock.tenantUser,
       prismaMock.apartmentBillingItem,
+      prismaMock.apartmentBankAccount,
       prismaMock.bill,
       prismaMock.lineNotification,
     ]) {
@@ -833,6 +843,29 @@ describe("apartment-admin operations API", () => {
     ]);
     expect(prismaMock.apartment.findUnique).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: apartmentId },
+    }));
+  });
+
+  it("creates the first bank account as the apartment primary account", async () => {
+    prismaMock.apartmentBankAccount.count.mockResolvedValue(0);
+    prismaMock.apartmentBankAccount.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.apartmentBankAccount.create.mockResolvedValue({
+      id: "80000000-0000-4000-8000-000000000000",
+      bankCode: "KBANK", bankName: "ธนาคารกสิกรไทย", accountType: "SAVINGS",
+      accountName: "ABC Apartment", accountNumber: "1234567890", isPrimary: true,
+    });
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
+    );
+
+    const response = await request(app)
+      .post("/api/admin/bank-accounts")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({ bankCode: "KBANK", bankName: "ธนาคารกสิกรไทย", accountType: "SAVINGS", accountName: "ABC Apartment", accountNumber: "1234567890", isPrimary: false });
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.apartmentBankAccount.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ apartmentId, createdByAdminId: userId, isPrimary: true }),
     }));
   });
 

@@ -13,6 +13,7 @@ import type {
   CreateBillInput,
   CreateTenantInput,
   ContactInput,
+  BankAccountInput,
   UpdateBillInput,
 } from "../validation/admin.validation.js";
 import { queueBillLineNotification, sendBillLineNotification } from "./line.service.js";
@@ -176,6 +177,50 @@ export async function deleteBillingItem(apartmentId: string, itemId: string) {
     data: { isActive: false },
   });
   if (!result.count) throw new AppError(404, "Billing item not found");
+}
+
+export async function listBankAccounts(apartmentId: string) {
+  return prisma.apartmentBankAccount.findMany({
+    where: { apartmentId, isActive: true },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+    select: { id: true, bankCode: true, bankName: true, accountType: true, accountName: true, accountNumber: true, isPrimary: true },
+  });
+}
+
+export async function createBankAccount(apartmentId: string, adminId: string, input: BankAccountInput) {
+  return prisma.$transaction(async (transaction) => {
+    const count = await transaction.apartmentBankAccount.count({ where: { apartmentId, isActive: true } });
+    const isPrimary = input.isPrimary || count === 0;
+    if (isPrimary) await transaction.apartmentBankAccount.updateMany({ where: { apartmentId, isActive: true }, data: { isPrimary: false } });
+    return transaction.apartmentBankAccount.create({
+      data: { ...input, isPrimary, apartmentId, createdByAdminId: adminId },
+      select: { id: true, bankCode: true, bankName: true, accountType: true, accountName: true, accountNumber: true, isPrimary: true },
+    });
+  });
+}
+
+export async function updateBankAccount(apartmentId: string, accountId: string, input: BankAccountInput) {
+  const existing = await prisma.apartmentBankAccount.findFirst({ where: { id: accountId, apartmentId, isActive: true }, select: { id: true } });
+  if (!existing) throw new AppError(404, "Bank account not found");
+  return prisma.$transaction(async (transaction) => {
+    if (input.isPrimary) await transaction.apartmentBankAccount.updateMany({ where: { apartmentId, isActive: true, NOT: { id: accountId } }, data: { isPrimary: false } });
+    return transaction.apartmentBankAccount.update({
+      where: { id: accountId }, data: input,
+      select: { id: true, bankCode: true, bankName: true, accountType: true, accountName: true, accountNumber: true, isPrimary: true },
+    });
+  });
+}
+
+export async function deleteBankAccount(apartmentId: string, accountId: string) {
+  const account = await prisma.apartmentBankAccount.findFirst({ where: { id: accountId, apartmentId, isActive: true }, select: { id: true, isPrimary: true } });
+  if (!account) throw new AppError(404, "Bank account not found");
+  await prisma.$transaction(async (transaction) => {
+    await transaction.apartmentBankAccount.update({ where: { id: accountId }, data: { isActive: false, isPrimary: false } });
+    if (account.isPrimary) {
+      const replacement = await transaction.apartmentBankAccount.findFirst({ where: { apartmentId, isActive: true }, orderBy: { createdAt: "asc" }, select: { id: true } });
+      if (replacement) await transaction.apartmentBankAccount.update({ where: { id: replacement.id }, data: { isPrimary: true } });
+    }
+  });
 }
 
 export async function listTenants(apartmentId: string) {
