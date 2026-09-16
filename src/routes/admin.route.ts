@@ -19,6 +19,8 @@ adminRouter.get("/tenants", adminController.tenants);
 adminRouter.get("/tenants/form-options", adminController.tenantFormOptions);
 adminRouter.post("/tenants", adminController.createTenant);
 adminRouter.delete("/tenants/:tenantId", adminController.deleteTenant);
+adminRouter.patch("/tenants/:tenantId/lease", adminController.updateTenantLease);
+adminRouter.post("/tenants/:tenantId/reset-password", adminController.resetTenantPassword);
 adminRouter.get("/tenants/:tenantId/bill-template", adminController.billTemplate);
 adminRouter.post("/bills", adminController.createBill);
 adminRouter.get("/bills", adminController.bills);

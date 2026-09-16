@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import crypto from "node:crypto";
 import {
   BillStatus,
   LineNotificationType,
@@ -15,6 +16,7 @@ import type {
   ContactInput,
   BankAccountInput,
   UpdateBillInput,
+  UpdateTenantLeaseInput,
 } from "../validation/admin.validation.js";
 import { queueBillLineNotification, sendBillLineNotification } from "./line.service.js";
 
@@ -413,6 +415,41 @@ export async function deleteTenant(apartmentId: string, tenantId: string) {
   });
   if (!tenant) throw new AppError(404, "Tenant not found");
   await prisma.tenantUser.delete({ where: { id: tenantId } });
+}
+
+export async function updateTenantLease(apartmentId: string, tenantId: string, input: UpdateTenantLeaseInput) {
+  const tenant = await prisma.tenantUser.findFirst({
+    where: { id: tenantId, apartmentId, isActive: true },
+    select: { id: true, moveInDate: true },
+  });
+  if (!tenant) throw new AppError(404, "Tenant not found");
+  const moveOutDate = input.moveOutDate ? dateAtStart(input.moveOutDate) : null;
+  if (moveOutDate && moveOutDate < tenant.moveInDate) throw new AppError(400, "Move-out date must be on or after move-in date");
+  return prisma.tenantUser.update({
+    where: { id: tenantId },
+    data: { moveOutDate },
+    select: { id: true, moveOutDate: true },
+  });
+}
+
+function temporaryPassword() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  return Array.from({ length: 12 }, () => alphabet[crypto.randomInt(alphabet.length)]).join("");
+}
+
+export async function resetTenantPassword(apartmentId: string, tenantId: string) {
+  const tenant = await prisma.tenantUser.findFirst({
+    where: { id: tenantId, apartmentId, isActive: true },
+    select: { id: true },
+  });
+  if (!tenant) throw new AppError(404, "Tenant not found");
+  const password = temporaryPassword();
+  const passwordHash = await bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
+  await prisma.tenantUser.update({
+    where: { id: tenantId },
+    data: { passwordHash, mustChangePassword: true },
+  });
+  return { temporaryPassword: password };
 }
 
 export async function getBillTemplate(apartmentId: string, tenantId: string) {

@@ -1181,4 +1181,48 @@ describe("tenant portal and payment lifecycle API", () => {
       data: expect.objectContaining({ status: "PAID", paidAt: expect.any(Date) }),
     }));
   });
+
+  it("lets an apartment admin update a tenant move-out date", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.APARTMENT_ADMIN,
+      isActive: true,
+      apartments: [{ apartmentId }],
+    });
+    prismaMock.tenantUser.findFirst.mockResolvedValue({ id: userId, moveInDate: new Date("2026-01-01T00:00:00.000Z") });
+    prismaMock.tenantUser.update.mockResolvedValue({ id: userId, moveOutDate: new Date("2026-12-31T00:00:00.000Z") });
+
+    const response = await request(app)
+      .patch(`/api/admin/tenants/${userId}/lease`)
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({ moveOutDate: "2026-12-31" });
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.tenantUser.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: userId, apartmentId, isActive: true },
+    }));
+    expect(prismaMock.tenantUser.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { moveOutDate: new Date("2026-12-31T00:00:00.000Z") },
+    }));
+  });
+
+  it("generates a temporary tenant password and forces a change after confirmation", async () => {
+    prismaMock.adminUser.findUnique.mockResolvedValue({
+      role: Role.APARTMENT_ADMIN,
+      isActive: true,
+      apartments: [{ apartmentId }],
+    });
+    prismaMock.tenantUser.findFirst.mockResolvedValue({ id: userId });
+    prismaMock.tenantUser.update.mockResolvedValue({ id: userId });
+
+    const response = await request(app)
+      .post(`/api/admin/tenants/${userId}/reset-password`)
+      .set("Authorization", `Bearer ${adminToken()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{12}$/);
+    expect(prismaMock.tenantUser.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: userId },
+      data: expect.objectContaining({ passwordHash: expect.any(String), mustChangePassword: true }),
+    }));
+  });
 });

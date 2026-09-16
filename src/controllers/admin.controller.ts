@@ -12,6 +12,7 @@ import {
   createTenantSchema,
   tenantParamsSchema,
   updateBillSchema,
+  updateTenantLeaseSchema,
 } from "../validation/admin.validation.js";
 import { lineBillParamsSchema, lineTenantParamsSchema } from "../validation/line.validation.js";
 import * as lineService from "../services/line.service.js";
@@ -81,6 +82,18 @@ export const deleteTenant: RequestHandler = async (request, response, next) => {
     const { tenantId } = tenantParamsSchema.parse(request.params);
     await adminService.deleteTenant(apartmentId(request), tenantId);
     response.status(204).end();
+  } catch (error) { next(error); }
+};
+export const updateTenantLease: RequestHandler = async (request, response, next) => {
+  try {
+    const { tenantId } = tenantParamsSchema.parse(request.params);
+    response.json({ tenant: await adminService.updateTenantLease(apartmentId(request), tenantId, updateTenantLeaseSchema.parse(request.body)) });
+  } catch (error) { next(error); }
+};
+export const resetTenantPassword: RequestHandler = async (request, response, next) => {
+  try {
+    const { tenantId } = tenantParamsSchema.parse(request.params);
+    response.json(await adminService.resetTenantPassword(apartmentId(request), tenantId));
   } catch (error) { next(error); }
 };
 export const billTemplate: RequestHandler = async (request, response, next) => {

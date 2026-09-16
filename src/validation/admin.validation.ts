@@ -20,6 +20,7 @@ export const billingItemSchema = z.object({
 
 export const billingItemParamsSchema = z.object({ itemId: z.uuid() }).strict();
 export const tenantParamsSchema = z.object({ tenantId: z.uuid() }).strict();
+export const updateTenantLeaseSchema = z.object({ moveOutDate: z.union([dateOnly, z.literal("")]) }).strict();
 export const billParamsSchema = z.object({ billId: z.uuid() }).strict();
 export const contactParamsSchema = z.object({ contactId: z.uuid() }).strict();
 
@@ -85,3 +86,4 @@ export type CreateBillInput = z.infer<typeof createBillSchema>;
 export type UpdateBillInput = z.infer<typeof updateBillSchema>;
 export type ContactInput = z.infer<typeof contactSchema>;
 export type BankAccountInput = z.infer<typeof bankAccountSchema>;
+export type UpdateTenantLeaseInput = z.infer<typeof updateTenantLeaseSchema>;
