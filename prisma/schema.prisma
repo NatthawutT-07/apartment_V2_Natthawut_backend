@@ -271,8 +271,8 @@ model LineLinkInvite {
   id               String     @id @default(uuid()) @db.Uuid
   tenantId         String     @db.Uuid
   tenant           TenantUser @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdByAdminId String     @db.Uuid
-  createdByAdmin   AdminUser  @relation(fields: [createdByAdminId], references: [id], onDelete: Restrict)
+  createdByAdminId String?    @db.Uuid
+  createdByAdmin   AdminUser? @relation(fields: [createdByAdminId], references: [id], onDelete: Restrict)
   tokenHash        String     @unique @db.VarChar(64)
   oauthStateHash   String?    @unique @db.VarChar(64)
   expiresAt        DateTime

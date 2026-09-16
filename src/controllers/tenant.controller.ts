@@ -1,7 +1,6 @@
 import type { RequestHandler } from "express";
 import * as tenantService from "../services/tenant.service.js";
 import * as lineService from "../services/line.service.js";
-import { lineConnectSchema } from "../validation/line.validation.js";
 
 function identity(request: Parameters<RequestHandler>[0]) {
   return { tenantId: request.user!.userId, apartmentId: request.user!.apartmentId! };
@@ -42,7 +41,6 @@ export const lineStatus: RequestHandler = async (request, response, next) => {
 export const startLineConnect: RequestHandler = async (request, response, next) => {
   try {
     const { tenantId, apartmentId } = identity(request);
-    const { inviteToken } = lineConnectSchema.parse(request.body);
-    response.json(await lineService.startTenantLineConnect(tenantId, apartmentId, inviteToken));
+    response.json(await lineService.startTenantSelfLineConnect(tenantId, apartmentId));
   } catch (error) { next(error); }
 };

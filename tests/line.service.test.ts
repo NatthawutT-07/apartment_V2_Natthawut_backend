@@ -8,13 +8,13 @@ const prismaMock = vi.hoisted(() => ({
     create: vi.fn(),
     updateMany: vi.fn(),
   },
-  tenantLineAccount: { upsert: vi.fn(), updateMany: vi.fn() },
+  tenantLineAccount: { findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
   lineNotification: { findUnique: vi.fn(), update: vi.fn() },
 }));
 
 vi.mock("../src/lib/prisma.js", () => ({ prisma: prismaMock }));
 
-import { completeLineConnect, createTenantLineInvite, disconnectTenantLine, sendBillLineNotification } from "../src/services/line.service.js";
+import { completeLineConnect, createTenantLineInvite, disconnectTenantLine, sendBillLineNotification, startTenantSelfLineConnect } from "../src/services/line.service.js";
 
 const tenantId = "50000000-0000-4000-8000-000000000000";
 const apartmentId = "20000000-0000-4000-8000-000000000000";
@@ -63,6 +63,22 @@ describe("LINE tenant linking", () => {
       expect.anything(),
     ]);
     expect(result.connectUrl).toMatch(/^https:\/\/app\.example\.com\/tenant\/line-connect\?invite=.+/);
+  });
+
+  it("lets an authenticated tenant start LINE connection without an admin invitation", async () => {
+    prismaMock.tenantUser.findFirst.mockResolvedValue({ id: tenantId });
+    prismaMock.tenantLineAccount.findFirst.mockResolvedValue(null);
+
+    const result = await startTenantSelfLineConnect(tenantId, apartmentId);
+
+    expect(prismaMock.tenantUser.findFirst).toHaveBeenCalledWith({
+      where: { id: tenantId, apartmentId, isActive: true },
+      select: { id: true },
+    });
+    expect(prismaMock.lineLinkInvite.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ tenantId, createdByAdminId: null }),
+    });
+    expect(result.authorizationUrl).toContain("https://access.line.me/oauth2/v2.1/authorize?");
   });
 
   it("invalidates every outstanding invitation after a successful LINE callback", async () => {

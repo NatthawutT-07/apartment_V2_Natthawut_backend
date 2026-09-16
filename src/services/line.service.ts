@@ -183,6 +183,43 @@ export async function startTenantLineConnect(tenantId: string, apartmentId: stri
   return { authorizationUrl: `https://access.line.me/oauth2/v2.1/authorize?${query.toString()}` };
 }
 
+export async function startTenantSelfLineConnect(tenantId: string, apartmentId: string) {
+  const [tenant, config, account] = await Promise.all([
+    prisma.tenantUser.findFirst({ where: { id: tenantId, apartmentId, isActive: true }, select: { id: true } }),
+    activeConfig(),
+    prisma.tenantLineAccount.findFirst({ where: { tenantId, apartmentId, isActive: true, blockedAt: null }, select: { id: true } }),
+  ]);
+  if (!tenant) throw new AppError(404, "Tenant not found");
+  if (account) throw new AppError(409, "LINE account is already connected");
+
+  const state = randomToken();
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.lineLinkInvite.updateMany({ where: { tenantId, usedAt: null }, data: { usedAt: now } }),
+    prisma.lineLinkInvite.create({
+      data: {
+        tenantId,
+        createdByAdminId: null,
+        tokenHash: tokenHash(randomToken()),
+        oauthStateHash: tokenHash(state),
+        startedAt: now,
+        expiresAt: new Date(Date.now() + INVITE_LIFETIME_MS),
+      },
+    }),
+  ]);
+
+  const callbackUrl = `${cleanBaseUrl(config.apiBaseUrl)}/api/line/callback`;
+  const query = new URLSearchParams({
+    response_type: "code",
+    client_id: config.loginChannelId,
+    redirect_uri: callbackUrl,
+    state,
+    scope: "openid profile",
+    bot_prompt: "aggressive",
+  });
+  return { authorizationUrl: `https://access.line.me/oauth2/v2.1/authorize?${query.toString()}` };
+}
+
 export async function completeLineConnect(code: string, state: string) {
   const config = await activeConfig();
   const invite = await prisma.lineLinkInvite.findFirst({
