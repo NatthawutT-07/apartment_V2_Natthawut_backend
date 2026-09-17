@@ -1,7 +1,14 @@
 import "dotenv/config";
 import bcrypt from "bcrypt";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, Role } from "../src/generated/prisma/client.js";
+import {
+  BankAccountType,
+  BillStatus,
+  BillingCalculation,
+  BillingItemKind,
+  PrismaClient,
+  Role,
+} from "../src/generated/prisma/client.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const seedDevelopmentAccounts = process.env.SEED_DEVELOPMENT_ACCOUNTS === "true";
@@ -85,6 +92,64 @@ function buildTenants(apartmentIndex: number) {
       idCard: String(1_000_000_000_000 + apartmentIndex * 50 + index),
       phone: `08${phoneSequence}`,
     };
+  });
+}
+
+type SeedBillItem = {
+  name: string;
+  kind: BillingItemKind;
+  calculationType: BillingCalculation;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  sortOrder: number;
+};
+
+const sampleBillItems: SeedBillItem[] = [
+  { name: "ค่าเช่าห้อง", kind: BillingItemKind.RENT, calculationType: BillingCalculation.FIXED, quantity: 1, unitPrice: 4500, amount: 4500, sortOrder: 1 },
+  { name: "ค่าน้ำ", kind: BillingItemKind.WATER, calculationType: BillingCalculation.USAGE, quantity: 12, unitPrice: 18, amount: 216, sortOrder: 2 },
+  { name: "ค่าไฟ", kind: BillingItemKind.ELECTRICITY, calculationType: BillingCalculation.USAGE, quantity: 85, unitPrice: 7, amount: 595, sortOrder: 3 },
+];
+
+async function seedBill(input: {
+  id: string;
+  apartmentId: string;
+  tenantId: string;
+  tenantName: string;
+  roomNumber: string;
+  billingPeriod: Date;
+  issuedAt: Date;
+  dueDate: Date;
+  status: BillStatus;
+  paidAt?: Date;
+  items?: SeedBillItem[];
+}) {
+  const items = input.items ?? sampleBillItems;
+  const totalAmount = items.reduce((total, item) => total + item.amount, 0);
+  const billData = {
+    apartmentId: input.apartmentId,
+    tenantId: input.tenantId,
+    tenantName: input.tenantName,
+    roomNumber: input.roomNumber,
+    billingPeriod: input.billingPeriod,
+    issuedAt: input.issuedAt,
+    dueDate: input.dueDate,
+    status: input.status,
+    paidAt: input.paidAt ?? null,
+    totalAmount,
+  };
+
+  await prisma.bill.upsert({
+    where: { id: input.id },
+    update: {
+      ...billData,
+      items: { deleteMany: {}, create: items.map((item) => ({ ...item })) },
+    },
+    create: {
+      id: input.id,
+      ...billData,
+      items: { create: items.map((item) => ({ ...item })) },
+    },
   });
 }
 
@@ -175,6 +240,32 @@ async function main() {
       },
     });
 
+    await prisma.apartmentBankAccount.upsert({
+      where: { id: `ba000000-0000-4000-8000-${String(apartmentIndex + 1).padStart(12, "0")}` },
+      update: {
+        apartmentId: apartment.id,
+        createdByAdminId: owner.id,
+        bankCode: "KBANK",
+        bankName: "ธนาคารกสิกรไทย",
+        accountType: BankAccountType.SAVINGS,
+        accountName: sample.name,
+        accountNumber: `123456${String(apartmentIndex + 1).padStart(4, "0")}`,
+        isPrimary: true,
+        isActive: true,
+      },
+      create: {
+        id: `ba000000-0000-4000-8000-${String(apartmentIndex + 1).padStart(12, "0")}`,
+        apartmentId: apartment.id,
+        createdByAdminId: owner.id,
+        bankCode: "KBANK",
+        bankName: "ธนาคารกสิกรไทย",
+        accountType: BankAccountType.SAVINGS,
+        accountName: sample.name,
+        accountNumber: `123456${String(apartmentIndex + 1).padStart(4, "0")}`,
+        isPrimary: true,
+      },
+    });
+
     const tenants = buildTenants(apartmentIndex);
     await prisma.room.createMany({
       data: tenants.map((tenant) => ({
@@ -197,7 +288,12 @@ async function main() {
       await prisma.$transaction(
         batch.map((tenant) =>
           prisma.tenantUser.upsert({
-            where: { username: `${apartment.slug}-${tenant.username}` },
+            where: {
+              apartmentId_roomNumber: {
+                apartmentId: apartment.id,
+                roomNumber: tenant.roomNumber,
+              },
+            },
             update: {
               fullName: tenant.fullName,
               roomNumber: tenant.roomNumber,
@@ -221,12 +317,55 @@ async function main() {
       );
     }
 
+    if (apartmentIndex === 0) {
+      const testTenant = await prisma.tenantUser.findUniqueOrThrow({
+        where: { username: `${apartment.slug}-room101` },
+        select: { id: true, fullName: true, roomNumber: true },
+      });
+      const common = {
+        apartmentId: apartment.id,
+        tenantId: testTenant.id,
+        tenantName: testTenant.fullName,
+        roomNumber: testTenant.roomNumber,
+      };
+
+      // Two SENT bills in the same month exercise per-bill slip uploads.
+      await seedBill({
+        id: "b1000000-0000-4000-8000-000000000001",
+        ...common,
+        billingPeriod: new Date("2026-09-01T00:00:00.000Z"),
+        issuedAt: new Date("2026-09-01T00:00:00.000Z"),
+        dueDate: new Date("2026-09-07T00:00:00.000Z"),
+        status: BillStatus.SENT,
+      });
+      await seedBill({
+        id: "b1000000-0000-4000-8000-000000000002",
+        ...common,
+        billingPeriod: new Date("2026-09-01T00:00:00.000Z"),
+        issuedAt: new Date("2026-09-10T00:00:00.000Z"),
+        dueDate: new Date("2026-09-20T00:00:00.000Z"),
+        status: BillStatus.SENT,
+        items: [
+          { name: "ค่าที่จอดรถเพิ่มเติม", kind: BillingItemKind.OTHER, calculationType: BillingCalculation.FIXED, quantity: 1, unitPrice: 500, amount: 500, sortOrder: 1 },
+        ],
+      });
+      await seedBill({
+        id: "b1000000-0000-4000-8000-000000000003",
+        ...common,
+        billingPeriod: new Date("2026-08-01T00:00:00.000Z"),
+        issuedAt: new Date("2026-08-01T00:00:00.000Z"),
+        dueDate: new Date("2026-08-07T00:00:00.000Z"),
+        status: BillStatus.PAID,
+        paidAt: new Date("2026-08-05T09:30:00.000Z"),
+      });
+    }
+
     console.log(
       `Seeded ${sample.name}: ${ownerUsername}, 50 tenants (room101-room510)`,
     );
   }
 
-  console.log("Seed complete: 1 super admin, 10 owners, 10 apartments, 500 tenants");
+  console.log("Seed complete: 1 super admin, 10 owners, 10 apartments, 500 tenants, 10 bank accounts, and sample bills for abc-room101");
 }
 
 main()
