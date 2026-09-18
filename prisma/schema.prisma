@@ -30,6 +30,8 @@ model TenantUser {
   id                 String    @id @default(uuid()) @db.Uuid
   apartmentId        String    @db.Uuid
   apartment          Apartment @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
+  roomId             String    @db.Uuid
+  room               Room      @relation(fields: [roomId], references: [id], onDelete: Restrict)
   username           String    @unique @db.VarChar(100)
   fullName           String    @db.VarChar(200)
   roomNumber         String    @db.VarChar(20)
@@ -50,6 +52,7 @@ model TenantUser {
 
   @@unique([apartmentId, roomNumber])
   @@unique([apartmentId, idCard])
+  @@index([roomId])
   @@map("User_Tenant")
 }
 
@@ -140,15 +143,26 @@ model Room {
   id            String    @id @default(uuid()) @db.Uuid
   apartmentId   String    @db.Uuid
   apartment     Apartment @relation(fields: [apartmentId], references: [id], onDelete: Restrict)
+  code          String    @db.VarChar(30)
   roomNumber    String    @db.VarChar(20)
+  displayName   String?   @db.VarChar(100)
+  size          Decimal?  @db.Decimal(8, 2)
+  sizeUnit      RoomSizeUnit @default(SQM)
   floor         String?   @db.VarChar(20)
   isPlaceholder Boolean   @default(false)
   isActive      Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  tenants       TenantUser[]
 
+  @@unique([apartmentId, code])
   @@unique([apartmentId, roomNumber])
   @@index([apartmentId, isActive])
+}
+
+enum RoomSizeUnit {
+  SQM
+  SQWA
 }
 
 model ApartmentBillingItem {

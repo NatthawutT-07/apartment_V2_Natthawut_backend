@@ -17,6 +17,8 @@ import type {
   BankAccountInput,
   UpdateBillInput,
   UpdateTenantLeaseInput,
+  RoomInput,
+  UpdateRoomInput,
 } from "../validation/admin.validation.js";
 import { queueBillLineNotification, sendBillLineNotification } from "./line.service.js";
 
@@ -62,7 +64,11 @@ export async function getDashboard(apartmentId: string) {
           orderBy: [{ floor: "asc" }, { roomNumber: "asc" }],
           select: {
             id: true,
+            code: true,
             roomNumber: true,
+            displayName: true,
+            size: true,
+            sizeUnit: true,
             floor: true,
             isPlaceholder: true,
           },
@@ -73,6 +79,7 @@ export async function getDashboard(apartmentId: string) {
             id: true,
             username: true,
             fullName: true,
+            roomId: true,
             roomNumber: true,
             floor: true,
             phone: true,
@@ -89,11 +96,12 @@ export async function getDashboard(apartmentId: string) {
   ]);
 
   if (!apartment) throw new AppError(404, "Apartment not found");
-  const tenantByRoom = new Map(apartment.tenants.map((tenant) => [tenant.roomNumber, tenant]));
+  const tenantByRoom = new Map(apartment.tenants.map((tenant) => [tenant.roomId, tenant]));
   const rooms = apartment.rooms.map((room) => ({
     ...room,
-    tenant: tenantByRoom.get(room.roomNumber) ?? null,
-    status: tenantByRoom.has(room.roomNumber) ? "OCCUPIED" as const : "AVAILABLE" as const,
+    size: room.size === null ? null : money(room.size),
+    tenant: tenantByRoom.get(room.id) ?? null,
+    status: tenantByRoom.has(room.id) ? "OCCUPIED" as const : "AVAILABLE" as const,
   }));
   const occupiedRooms = rooms.filter((room) => room.status === "OCCUPIED").length;
 
@@ -107,6 +115,67 @@ export async function getDashboard(apartmentId: string) {
     },
     rooms,
   };
+}
+
+const roomSelect = {
+  id: true, code: true, roomNumber: true, displayName: true, size: true,
+  sizeUnit: true, floor: true, isActive: true, isPlaceholder: true,
+  tenants: { where: { isActive: true }, take: 1, select: { id: true, fullName: true } },
+} as const;
+
+function publicRoom<T extends { size: Prisma.Decimal | null; tenants: Array<{ id: string; fullName: string }> }>(room: T) {
+  const { tenants, ...details } = room;
+  return { ...details, size: room.size === null ? null : money(room.size), tenant: tenants[0] ?? null };
+}
+
+export async function listRooms(apartmentId: string) {
+  const rooms = await prisma.room.findMany({
+    where: { apartmentId },
+    orderBy: [{ floor: "asc" }, { roomNumber: "asc" }],
+    select: roomSelect,
+  });
+  return rooms.map(publicRoom);
+}
+
+export async function createRoom(apartmentId: string, input: RoomInput) {
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      const room = await transaction.room.create({
+        data: { apartmentId, ...input, isPlaceholder: false },
+        select: roomSelect,
+      });
+      await transaction.apartment.update({ where: { id: apartmentId }, data: { totalRooms: { increment: 1 } } });
+      return publicRoom(room);
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new AppError(409, "Room code or number is already in use");
+    throw error;
+  }
+}
+
+export async function updateRoom(apartmentId: string, roomId: string, input: UpdateRoomInput) {
+  const existing = await prisma.room.findFirst({
+    where: { id: roomId, apartmentId },
+    select: { id: true, roomNumber: true, isActive: true, tenants: { where: { isActive: true }, take: 1, select: { id: true } } },
+  });
+  if (!existing) throw new AppError(404, "Room not found");
+  if (!input.isActive && existing.tenants.length) throw new AppError(409, "An occupied room cannot be deactivated");
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      const room = await transaction.room.update({ where: { id: roomId }, data: { ...input, isPlaceholder: false }, select: roomSelect });
+      await transaction.tenantUser.updateMany({
+        where: { apartmentId, roomId, isActive: true },
+        data: { roomNumber: input.roomNumber, floor: input.floor ?? null },
+      });
+      if (existing.isActive !== input.isActive) {
+        await transaction.apartment.update({ where: { id: apartmentId }, data: { totalRooms: input.isActive ? { increment: 1 } : { decrement: 1 } } });
+      }
+      return publicRoom(room);
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new AppError(409, "Room code or number is already in use");
+    throw error;
+  }
 }
 
 export async function listBillingItems(apartmentId: string) {
@@ -266,17 +335,17 @@ export async function getTenantFormOptions(apartmentId: string) {
     prisma.room.findMany({
       where: { apartmentId, isActive: true },
       orderBy: [{ floor: "asc" }, { roomNumber: "asc" }],
-      select: { id: true, roomNumber: true, floor: true, isPlaceholder: true },
+      select: { id: true, code: true, roomNumber: true, displayName: true, size: true, sizeUnit: true, floor: true, isPlaceholder: true },
     }),
     prisma.tenantUser.findMany({
       where: { apartmentId, isActive: true },
-      select: { roomNumber: true },
+      select: { roomId: true },
     }),
     listBillingItems(apartmentId),
   ]);
-  const occupied = new Set(occupiedTenants.map((tenant) => tenant.roomNumber));
+  const occupied = new Set(occupiedTenants.map((tenant) => tenant.roomId));
   return {
-    rooms: rooms.filter((room) => !occupied.has(room.roomNumber)),
+    rooms: rooms.filter((room) => !occupied.has(room.id)).map((room) => ({ ...room, size: room.size === null ? null : money(room.size) })),
     billingItems: billingItems.map((item) => ({
       ...item,
       quantity: item.calculationType === "FIXED" ? 1 : 0,
@@ -346,11 +415,11 @@ export async function createTenant(apartmentId: string, input: CreateTenantInput
     const result = await prisma.$transaction(async (transaction) => {
       const room = await transaction.room.findFirst({
         where: { id: input.roomId, apartmentId, isActive: true },
-        select: { id: true, roomNumber: true },
+        select: { id: true, roomNumber: true, floor: true },
       });
       if (!room) throw new AppError(404, "Room not found");
 
-      const [occupied, usernameExists, idCardExists, roomNumberExists] = await Promise.all([
+      const [occupied, usernameExists, idCardExists] = await Promise.all([
         transaction.tenantUser.findUnique({
           where: { apartmentId_roomNumber: { apartmentId, roomNumber: room.roomNumber } },
           select: { id: true },
@@ -363,25 +432,21 @@ export async function createTenant(apartmentId: string, input: CreateTenantInput
           where: { apartmentId, idCard: input.idCard },
           select: { id: true },
         }),
-        transaction.room.findFirst({
-          where: { apartmentId, roomNumber: input.roomNumber, NOT: { id: room.id } },
-          select: { id: true },
-        }),
       ]);
       if (occupied) throw new AppError(409, "Room is already occupied");
       if (usernameExists) throw new AppError(409, "Tenant username is already in use");
       if (idCardExists) throw new AppError(409, "ID card is already in use");
-      if (roomNumberExists) throw new AppError(409, "Room number is already in use");
 
       await transaction.room.update({
         where: { id: room.id },
-        data: { roomNumber: input.roomNumber, floor: input.floor, isPlaceholder: false },
+        data: { isPlaceholder: false },
       });
       const tenant = await transaction.tenantUser.create({
         data: {
           apartmentId,
-          roomNumber: input.roomNumber,
-          floor: input.floor,
+          roomId: room.id,
+          roomNumber: room.roomNumber,
+          floor: room.floor,
           fullName: input.fullName,
           idCard: input.idCard,
           phone: input.phone,

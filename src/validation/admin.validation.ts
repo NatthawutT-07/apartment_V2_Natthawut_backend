@@ -20,6 +20,17 @@ export const billingItemSchema = z.object({
 
 export const billingItemParamsSchema = z.object({ itemId: z.uuid() }).strict();
 export const tenantParamsSchema = z.object({ tenantId: z.uuid() }).strict();
+export const roomParamsSchema = z.object({ roomId: z.uuid() }).strict();
+export const roomSchema = z.object({
+  code: z.string().trim().min(1).max(30).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/),
+  roomNumber: z.string().trim().min(1).max(20),
+  displayName: z.string().trim().max(100).optional().transform((value) => value || undefined),
+  size: z.union([z.coerce.number().positive().max(100000), z.literal("")]).optional()
+    .transform((value) => value === "" ? undefined : value),
+  sizeUnit: z.enum(["SQM", "SQWA"]).default("SQM"),
+  floor: z.string().trim().max(20).optional().transform((value) => value || undefined),
+}).strict();
+export const updateRoomSchema = roomSchema.extend({ isActive: z.boolean() }).strict();
 export const updateTenantLeaseSchema = z.object({ moveOutDate: z.union([dateOnly, z.literal("")]) }).strict();
 export const billParamsSchema = z.object({ billId: z.uuid() }).strict();
 export const contactParamsSchema = z.object({ contactId: z.uuid() }).strict();
@@ -60,8 +71,6 @@ const billInputSchema = z.object({
 
 export const createTenantSchema = z.object({
   roomId: z.uuid(),
-  roomNumber: z.string().trim().min(1).max(20),
-  floor: z.string().trim().min(1).max(20),
   fullName: z.string().trim().min(2).max(200),
   idCard: z.string().trim().min(6).max(30),
   phone: z.string().trim().min(6).max(30),
@@ -87,3 +96,5 @@ export type UpdateBillInput = z.infer<typeof updateBillSchema>;
 export type ContactInput = z.infer<typeof contactSchema>;
 export type BankAccountInput = z.infer<typeof bankAccountSchema>;
 export type UpdateTenantLeaseInput = z.infer<typeof updateTenantLeaseSchema>;
+export type RoomInput = z.infer<typeof roomSchema>;
+export type UpdateRoomInput = z.infer<typeof updateRoomSchema>;

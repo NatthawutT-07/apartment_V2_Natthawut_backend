@@ -143,6 +143,7 @@ export async function createApartmentAdmin(input: CreateApartmentAdminInput) {
       await transaction.room.createMany({
         data: Array.from({ length: input.totalRooms }, (_, index) => ({
           apartmentId: apartment.id,
+          code: `RM-${String(index + 1).padStart(4, "0")}`,
           roomNumber: String(index + 1).padStart(roomNumberWidth, "0"),
         })),
       });

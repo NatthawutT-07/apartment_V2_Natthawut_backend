@@ -268,12 +268,18 @@ async function main() {
 
     const tenants = buildTenants(apartmentIndex);
     await prisma.room.createMany({
-      data: tenants.map((tenant) => ({
+      data: tenants.map((tenant, index) => ({
         apartmentId: apartment.id,
+        code: `RM-${String(index + 1).padStart(4, "0")}`,
         roomNumber: tenant.roomNumber,
       })),
       skipDuplicates: true,
     });
+    const apartmentRooms = await prisma.room.findMany({
+      where: { apartmentId: apartment.id },
+      select: { id: true, roomNumber: true },
+    });
+    const roomIdByNumber = new Map(apartmentRooms.map((room) => [room.roomNumber, room.id]));
     await prisma.apartmentBillingItem.createMany({
       data: [
         { apartmentId: apartment.id, name: "ค่าเช่าห้อง", kind: "RENT", calculationType: "FIXED", unitPrice: 0, sortOrder: 1 },
@@ -295,6 +301,7 @@ async function main() {
               },
             },
             update: {
+              roomId: roomIdByNumber.get(tenant.roomNumber)!,
               fullName: tenant.fullName,
               roomNumber: tenant.roomNumber,
               floor: tenant.floor,
@@ -307,6 +314,7 @@ async function main() {
             },
             create: {
               ...tenant,
+              roomId: roomIdByNumber.get(tenant.roomNumber)!,
               username: `${apartment.slug}-${tenant.username}`,
               apartmentId: apartment.id,
               passwordHash: tenantHash,

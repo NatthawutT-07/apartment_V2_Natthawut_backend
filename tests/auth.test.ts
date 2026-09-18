@@ -17,6 +17,7 @@ const prismaMock = vi.hoisted(() => ({
     update: vi.fn(),
   },
   room: {
+    create: vi.fn(),
     createMany: vi.fn(),
     findMany: vi.fn(),
     findFirst: vi.fn(),
@@ -65,6 +66,7 @@ const prismaMock = vi.hoisted(() => ({
     findMany: vi.fn(),
     findUnique: vi.fn(),
     create: vi.fn(),
+    update: vi.fn(),
   },
   lineOaConfig: {
     findUnique: vi.fn(),
@@ -509,8 +511,8 @@ describe("super-admin apartment provisioning API", () => {
     }));
     expect(prismaMock.room.createMany).toHaveBeenCalledWith({
       data: expect.arrayContaining([
-        { apartmentId, roomNumber: "001" },
-        { apartmentId, roomNumber: "072" },
+        { apartmentId, code: "RM-0001", roomNumber: "001" },
+        { apartmentId, code: "RM-0072", roomNumber: "072" },
       ]),
     });
     const adminCreate = prismaMock.adminUser.create.mock.calls[0]?.[0];
@@ -819,10 +821,10 @@ describe("apartment-admin operations API", () => {
       id: apartmentId,
       name: "ABC Apartment",
       rooms: [
-        { id: "60000000-0000-4000-8000-000000000001", roomNumber: "101", floor: "1", isPlaceholder: false },
-        { id: "60000000-0000-4000-8000-000000000002", roomNumber: "102", floor: "1", isPlaceholder: false },
+        { id: "60000000-0000-4000-8000-000000000001", code: "RM-0001", roomNumber: "101", displayName: "ห้องปกติ", size: 30, sizeUnit: "SQM", floor: "1", isPlaceholder: false },
+        { id: "60000000-0000-4000-8000-000000000002", code: "RM-0002", roomNumber: "102", displayName: null, size: null, sizeUnit: "SQM", floor: "1", isPlaceholder: false },
       ],
-      tenants: [{ id: tenantId, username: "room101", fullName: "Tenant One", roomNumber: "101", floor: "1", phone: "0800000000" }],
+      tenants: [{ id: tenantId, username: "room101", fullName: "Tenant One", roomId: "60000000-0000-4000-8000-000000000001", roomNumber: "101", floor: "1", phone: "0800000000" }],
     });
     prismaMock.bill.count.mockResolvedValue(2);
 
@@ -866,6 +868,29 @@ describe("apartment-admin operations API", () => {
     expect(response.status).toBe(201);
     expect(prismaMock.apartmentBankAccount.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ apartmentId, createdByAdminId: userId, isPrimary: true }),
+    }));
+  });
+
+  it("creates an apartment-scoped room with editable display details", async () => {
+    const roomId = "60000000-0000-4000-8000-000000000003";
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
+    );
+    prismaMock.room.create.mockResolvedValue({
+      id: roomId, code: "SP-001", roomNumber: "187/85", displayName: "ห้องพิเศษ",
+      size: 34, sizeUnit: "SQM", floor: "1", isActive: true, isPlaceholder: false, tenants: [],
+    });
+    prismaMock.apartment.update.mockResolvedValue({ id: apartmentId });
+
+    const response = await request(app)
+      .post("/api/admin/rooms")
+      .set("Authorization", `Bearer ${adminToken()}`)
+      .send({ code: "SP-001", roomNumber: "187/85", displayName: "ห้องพิเศษ", size: 34, sizeUnit: "SQM", floor: "1" });
+
+    expect(response.status).toBe(201);
+    expect(response.body.room).toEqual(expect.objectContaining({ code: "SP-001", roomNumber: "187/85", displayName: "ห้องพิเศษ", size: 34 }));
+    expect(prismaMock.room.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ apartmentId, code: "SP-001", roomNumber: "187/85" }),
     }));
   });
 
@@ -925,7 +950,7 @@ describe("apartment-admin operations API", () => {
     prismaMock.$transaction.mockImplementation(
       (callback: (transaction: typeof prismaMock) => unknown) => callback(prismaMock),
     );
-    prismaMock.room.findFirst.mockResolvedValue({ id: roomId, roomNumber: "101" });
+    prismaMock.room.findFirst.mockResolvedValue({ id: roomId, roomNumber: "101", floor: "1" });
     prismaMock.tenantUser.findUnique
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: "tenant-in-another-apartment" });
@@ -936,8 +961,6 @@ describe("apartment-admin operations API", () => {
       .set("Authorization", `Bearer ${adminToken()}`)
       .send({
         roomId,
-        roomNumber: "101",
-        floor: "1",
         fullName: "Tenant One",
         idCard: "1234567890123",
         phone: "0800000000",

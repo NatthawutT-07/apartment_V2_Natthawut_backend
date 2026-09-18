@@ -13,6 +13,9 @@ import {
   tenantParamsSchema,
   updateBillSchema,
   updateTenantLeaseSchema,
+  roomParamsSchema,
+  roomSchema,
+  updateRoomSchema,
 } from "../validation/admin.validation.js";
 import { lineBillParamsSchema, lineTenantParamsSchema } from "../validation/line.validation.js";
 import * as lineService from "../services/line.service.js";
@@ -23,6 +26,18 @@ function apartmentId(request: Parameters<RequestHandler>[0]) {
 
 export const dashboard: RequestHandler = async (request, response, next) => {
   try { response.json(await adminService.getDashboard(apartmentId(request))); } catch (error) { next(error); }
+};
+export const rooms: RequestHandler = async (request, response, next) => {
+  try { response.json({ rooms: await adminService.listRooms(apartmentId(request)) }); } catch (error) { next(error); }
+};
+export const createRoom: RequestHandler = async (request, response, next) => {
+  try { response.status(201).json({ room: await adminService.createRoom(apartmentId(request), roomSchema.parse(request.body)) }); } catch (error) { next(error); }
+};
+export const updateRoom: RequestHandler = async (request, response, next) => {
+  try {
+    const { roomId } = roomParamsSchema.parse(request.params);
+    response.json({ room: await adminService.updateRoom(apartmentId(request), roomId, updateRoomSchema.parse(request.body)) });
+  } catch (error) { next(error); }
 };
 export const billingItems: RequestHandler = async (request, response, next) => {
   try { response.json({ items: await adminService.listBillingItems(apartmentId(request)) }); } catch (error) { next(error); }
